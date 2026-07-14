@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "body", "tags", "imageCards", "visualDirection", "assetMode", "characterAssets", "diagnosis", "revisionNotes", "editorNote"],
+  "properties": {
+    "title": { "type": "string" },
+    "body": { "type": "string" },
+    "tags": { "type": "array", "minItems": 3, "maxItems": 10, "items": { "type": "string" } },
+    "imageCards": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kicker", "headline", "body", "characterAction"],
+        "properties": {
+          "kicker": { "type": "string", "description": "Reader-facing label only; no internal brand, layout, motif, prompt, or production terminology." },
+          "headline": { "type": "string", "description": "Reader-facing headline only; do not expose analysis or visual-direction terminology." },
+          "body": { "type": "string", "description": "Reader-facing copy only; no internal analysis, visual-direction, or production terminology." },
+          "characterAction": { "type": "string" }
+        }
+      }
+    },
+    "visualDirection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "rationale", "topicFit", "avatarFit", "palette", "typographyMode", "layoutMode", "motif", "imageTreatment", "coverFormula"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "rationale": { "type": "string" },
+        "topicFit": { "type": "string" },
+        "avatarFit": { "type": "string" },
+        "palette": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["paper", "ink", "primary", "accent", "soft"],
+          "properties": {
+            "paper": { "type": "string" },
+            "ink": { "type": "string" },
+            "primary": { "type": "string" },
+            "accent": { "type": "string" },
+            "soft": { "type": "string" }
+          }
+        },
+        "typographyMode": { "type": "string" },
+        "layoutMode": { "type": "string", "enum": ["editorial-grid", "bold-stack", "airy-focus", "notebook-flow"] },
+        "motif": { "type": "string" },
+        "imageTreatment": { "type": "string" },
+        "coverFormula": { "type": "string" }
+      }
+    },
+    "assetMode": { "type": "string", "enum": ["reuse", "regenerate"] },
+    "characterAssets": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "filePath"],
+        "properties": {
+          "action": { "type": "string" },
+          "filePath": { "type": "string" }
+        }
+      }
+    },
+    "diagnosis": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string" } },
+    "revisionNotes": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string" } },
+    "editorNote": { "type": "string" }
+  }
+}

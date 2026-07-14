@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.data/
+.npm-cache/
+public/generated/*
+!public/generated/.gitkeep
+public/brand/avatars/*
+!public/brand/avatars/.gitkeep
+public/brand/actions/*
+!public/brand/actions/.gitkeep
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+packages/share-site/build/

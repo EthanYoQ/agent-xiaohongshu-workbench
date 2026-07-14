@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "evidenceMode", "summary", "signals", "topics", "blocker"],
+  "properties": {
+    "status": { "type": "string", "enum": ["success", "partial", "blocked"] },
+    "evidenceMode": { "type": "string", "enum": ["live_xhs", "public_web", "none"] },
+    "summary": { "type": "string" },
+    "blocker": { "type": ["string", "null"] },
+    "signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "heat", "evidence", "url", "noteId", "mediaKind", "imageCount"],
+        "properties": {
+          "label": { "type": "string" },
+          "heat": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "evidence": { "type": "string" },
+          "url": { "type": ["string", "null"] },
+          "noteId": { "type": ["string", "null"] },
+          "mediaKind": { "type": "string", "enum": ["graphic", "unknown"] },
+          "imageCount": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "angle", "reason", "evidenceRefs"],
+        "properties": {
+          "title": { "type": "string" },
+          "angle": { "type": "string" },
+          "reason": { "type": "string" },
+          "evidenceRefs": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+        }
+      }
+    }
+  }
+}

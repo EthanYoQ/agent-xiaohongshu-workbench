@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "sources", "contentStructure", "writingMechanics", "visualDNA", "publishingContext", "imitationStrategy", "visualDirections", "recommendedDirectionId", "blocker"],
+  "properties": {
+    "status": { "type": "string", "enum": ["success", "partial", "blocked"] },
+    "summary": { "type": "string" },
+    "sources": {
+      "type": "array", "minItems": 0, "maxItems": 3,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["title", "url", "noteId", "mediaKind", "imageCount", "publishedAt", "engagement", "observations"],
+        "properties": {
+          "title": { "type": "string" }, "url": { "type": "string" }, "noteId": { "type": "string" },
+          "mediaKind": { "type": "string", "const": "graphic" }, "imageCount": { "type": "integer", "minimum": 1 },
+          "publishedAt": { "type": "string" }, "engagement": { "type": "string" }, "observations": { "type": "string" }
+        }
+      }
+    },
+    "contentStructure": { "$ref": "#/$defs/analysisBlock" },
+    "writingMechanics": { "$ref": "#/$defs/analysisBlock" },
+    "visualDNA": { "$ref": "#/$defs/analysisBlock" },
+    "publishingContext": {
+      "type": "object", "additionalProperties": false,
+      "required": ["observed", "recommendation", "confidence"],
+      "properties": { "observed": { "type": "string" }, "recommendation": { "type": "string" }, "confidence": { "type": "string", "enum": ["high", "medium", "low"] } }
+    },
+    "imitationStrategy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["transferablePatterns", "accountAdaptation", "originalityBoundaries"],
+      "properties": {
+        "transferablePatterns": { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+        "accountAdaptation": { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+        "originalityBoundaries": { "type": "array", "items": { "type": "string" }, "minItems": 2 }
+      }
+    },
+    "visualDirections": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "name", "rationale", "topicFit", "avatarFit", "palette", "typographyMode", "layoutMode", "motif", "imageTreatment", "coverFormula"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^direction-[1-3]$" }, "name": { "type": "string" }, "rationale": { "type": "string" },
+          "topicFit": { "type": "string" }, "avatarFit": { "type": "string" }, "palette": { "$ref": "#/$defs/palette" },
+          "typographyMode": { "type": "string" }, "layoutMode": { "type": "string", "enum": ["editorial-grid", "bold-stack", "airy-focus", "notebook-flow"] },
+          "motif": { "type": "string", "description": "Internal visual configuration only. Never render this string or copy it into reader-facing card text." }, "imageTreatment": { "type": "string", "description": "Internal visual configuration only; never reader-facing copy." }, "coverFormula": { "type": "string", "description": "Internal writing guidance only; never render verbatim." }
+        }
+      }
+    },
+    "recommendedDirectionId": { "type": "string", "pattern": "^direction-[1-3]$" },
+    "blocker": { "type": "string" }
+  },
+  "$defs": {
+    "analysisBlock": {
+      "type": "object", "additionalProperties": false,
+      "required": ["summary", "patterns", "evidence"],
+      "properties": { "summary": { "type": "string" }, "patterns": { "type": "array", "items": { "type": "string" }, "minItems": 2 }, "evidence": { "type": "array", "items": { "type": "string" }, "minItems": 1 } }
+    },
+    "palette": {
+      "type": "object", "additionalProperties": false,
+      "required": ["paper", "ink", "primary", "accent", "soft"],
+      "properties": {
+        "paper": { "$ref": "#/$defs/hex" }, "ink": { "$ref": "#/$defs/hex" }, "primary": { "$ref": "#/$defs/hex" },
+        "accent": { "$ref": "#/$defs/hex" }, "soft": { "$ref": "#/$defs/hex" }
+      }
+    },
+    "hex": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+  }
+}

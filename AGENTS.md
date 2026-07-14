@@ -1,0 +1,21 @@
+# Agent小红书工作台：项目指引
+
+## 产品边界
+
+- 这是本地单账号图文内容工作台。热点研究、选题、拆解、文稿、去 AI 味、配图与发布由本地 Codex Agent 执行，应用本身不嵌入模型 API。
+- 所有浏览器读取和发布均通过用户自己的 OpenCLI Browser Bridge 登录会话完成；应用不读取、复制或保存 Cookie、账号密码或平台 API Key。
+- 研究只接纳经媒体探针确认的纯图文笔记：`mediaKind=graphic`、`hasVideo=false`、`imageCount>=1`。视频、混合媒体与无法确认的媒体一律排除。
+- 发布必须经过完整预览确认和独立动作确认。`publish_now` 需返回可验证的笔记 ID 或 URL；`save_draft` 只能点击小红书创作页文字完全一致的“暂存离开”，绝不点击“发布”。
+- 不使用 Superpowers。热点拆解只使用随项目分发的 Lingzao Skill；不调用 Lingzao API、积分服务或生图服务。
+
+## 内置依赖与路径
+
+- Codex Agent 任务固定使用 `gpt-5.6-terra`。拆解、初稿、中文去 AI 味与涉及文稿的修改使用 `high`；检索、头像/配图、纯视觉修改和发布使用 `medium`。
+- 项目内置的 Skill 在 `.agents/skills/`：`lingzao`、`humanized-chinese-writing-polisher` 与 `opencli-browser`。不得要求用户另行克隆或安装这些 Skill。
+- 运行依赖由根目录 `package.json` 安装：`@jackwener/opencli`。Codex CLI 是外部前置条件，必须由每位用户自行安装并登录；Chrome 扩展和小红书登录态同样属于必要个人配置，不能随仓库分发。
+
+## 隐私与公开发布
+
+- `.data/`、`public/generated/`、`public/brand/avatars/` 与 `public/brand/actions/` 是运行时用户数据，必须保持未跟踪。
+- 不要把账号定位、热点 URL、笔记正文、评论、发布记录、浏览器日志、Cookie、令牌、截图或用户上传头像写入源码、测试夹具、文档或 Git 历史。
+- 新安装从空白状态开始；只有用户主动输入定位并生成/上传品牌角色后，才可执行后续流程。

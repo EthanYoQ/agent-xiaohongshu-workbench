@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "skills": {
+    "lingzao": {
+      "source": "atian-create/lingzao-skill",
+      "sourceType": "github-minimal-extract",
+      "skillPath": "SKILL.md",
+      "localPath": ".agents/skills/lingzao",
+      "license": "MIT-0",
+      "includedFiles": [
+        "LICENSE",
+        "SKILL.md",
+        "VERSION",
+        "playbooks/single-note-breakdown-workflow.md",
+        "playbooks/draft-rewrite-and-benchmark-workflow.md"
+      ],
+      "note": "Only the two playbooks read by this workbench are included; upstream CLI, Python client and unrelated playbooks are intentionally excluded."
+    },
+    "humanized-chinese-writing-polisher": {
+      "source": "bundled-project-skill",
+      "sourceType": "local-copy",
+      "skillPath": "SKILL.md",
+      "localPath": ".agents/skills/humanized-chinese-writing-polisher",
+      "license": "MIT"
+    },
+    "opencli-browser": {
+      "source": "jackwener/opencli",
+      "sourceType": "npm",
+      "package": "@jackwener/opencli@1.8.6",
+      "skillPath": "skills/opencli-browser/SKILL.md",
+      "localPath": ".agents/skills/opencli-browser",
+      "license": "Apache-2.0"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+observed_at_utc,channel,query_category,query,rank,status,notes
+2026-07-14T00:00:00Z,github_search,category,xiaohongshu content workflow,,not_measured_prelaunch,Initial public repository did not exist before launch; no ranking claim is made.
+2026-07-14T00:00:00Z,github_search,scenario,codex content creation agent,,not_measured_prelaunch,Initial public repository did not exist before launch; no ranking claim is made.
+2026-07-14T00:00:00Z,github_search,exact_long_tail,agent xiaohongshu workbench,,not_measured_prelaunch,Exact-name query is tracked separately and is not natural-discovery evidence.
