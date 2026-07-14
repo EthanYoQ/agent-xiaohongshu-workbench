@@ -1,5 +1,6 @@
 asset,path,status,public_safe,notes
 Project logo,public/project-logo.png,ready,yes,User-provided project logo; contains no account or runtime data.
+Workbench screenshot,docs/assets/workbench-overview.jpg,ready,yes,Captured from a blank local workspace with no account or runtime content.
 README icons,docs/assets/icons/,ready,yes,Lucide icons retrieved through local Better Icons MCP.
 Runtime generated images,public/generated/,ignored,no,Created locally and intentionally excluded from Git.
 Brand avatar and action assets,public/brand/avatars/;public/brand/actions/,ignored,no,Created or supplied by each user and intentionally excluded from Git.
