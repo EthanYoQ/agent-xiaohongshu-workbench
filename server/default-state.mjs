@@ -3,16 +3,17 @@ export function createBrandCharacter() {
     status: "not_started",
     brief: "",
     locked: false,
-    source: "awaiting-user-brief",
+    source: "awaiting-user-upload",
     avatar: null,
     identityLock: null,
+    series: [],
     updatedAt: null,
   };
 }
 
 export function createBrandVisualIdentity() {
   return {
-    version: "agent-xhs-brand-v1",
+    version: "agent-xhs-brand-v2",
     name: "暖纸内容手账",
     palette: {
       paper: "#FFF8EA",
@@ -49,6 +50,7 @@ export function createDefaultState() {
     selectedVisualDirectionId: null,
     brandCharacter: createBrandCharacter(),
     brandVisualIdentity: createBrandVisualIdentity(),
+    generationSettings: { imageCount: 4 },
     draft: null,
     copyVersions: { raw: null, humanized: null },
     humanization: null,
@@ -56,6 +58,7 @@ export function createDefaultState() {
     review: null,
     publish: { status: "not_started", noteId: null, url: null, message: "尚未发布" },
     storyline: { entries: [], updatedAt: null },
+    storylineSync: { status: "not_started", imported: 0, updatedAt: null, message: "尚未同步创作后台" },
     lastJobId: null,
   };
 }

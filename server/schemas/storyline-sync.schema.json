@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "notes", "blocker"],
+  "properties": {
+    "status": { "type": "string", "enum": ["success", "partial", "blocked"] },
+    "summary": { "type": "string" },
+    "blocker": { "type": ["string", "null"] },
+    "notes": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "noteId", "url", "publishedAt", "tags", "imageCount", "mediaKind", "evidence"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "noteId": { "type": ["string", "null"] },
+          "url": { "type": ["string", "null"] },
+          "publishedAt": { "type": "string", "minLength": 1 },
+          "tags": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
+          "imageCount": { "type": "integer", "minimum": 1 },
+          "mediaKind": { "type": "string", "const": "graphic" },
+          "evidence": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

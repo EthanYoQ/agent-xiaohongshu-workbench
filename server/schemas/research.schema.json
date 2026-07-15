@@ -13,7 +13,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["label", "heat", "evidence", "url", "noteId", "mediaKind", "imageCount"],
+        "required": ["label", "heat", "evidence", "url", "noteId", "mediaKind", "imageCount", "publishedAt", "engagement"],
         "properties": {
           "label": { "type": "string" },
           "heat": { "type": "integer", "minimum": 0, "maximum": 100 },
@@ -21,7 +21,21 @@
           "url": { "type": ["string", "null"] },
           "noteId": { "type": ["string", "null"] },
           "mediaKind": { "type": "string", "enum": ["graphic", "unknown"] },
-          "imageCount": { "type": "integer", "minimum": 0 }
+          "imageCount": { "type": "integer", "minimum": 0 },
+          "publishedAt": { "type": ["string", "null"] },
+          "engagement": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["likes", "collects", "comments", "verified", "observedAt", "source"],
+            "properties": {
+              "likes": { "type": "integer", "minimum": 0 },
+              "collects": { "type": "integer", "minimum": 0 },
+              "comments": { "type": "integer", "minimum": 0 },
+              "verified": { "type": "boolean", "const": true },
+              "observedAt": { "type": "string" },
+              "source": { "type": "string", "minLength": 1 }
+            }
+          }
         }
       }
     },

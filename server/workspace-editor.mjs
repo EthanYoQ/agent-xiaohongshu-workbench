@@ -21,6 +21,28 @@ export function resetProductionAfterTopic(state, message = "选题已更新，�
   state.publish = { status: "not_started", noteId: null, url: null, message };
 }
 
+export function resetProductionAfterBrandChange(state, message = "品牌角色已更新，等待重新拆解") {
+  resetProductionAfterTopic(state, message);
+}
+
+export function setGenerationImageCount(state, value) {
+  const imageCount = Number(value);
+  if (!Number.isInteger(imageCount) || imageCount < 1 || imageCount > 6) {
+    throw new Error("配图数量必须是 1 到 6 的整数");
+  }
+  const previous = Number(state.generationSettings?.imageCount || 4);
+  state.generationSettings = { ...(state.generationSettings || {}), imageCount };
+  if (previous !== imageCount && state.draft) {
+    state.draft = null;
+    state.copyVersions = emptyCopyVersions();
+    state.humanization = null;
+    state.assets = [];
+    state.review = null;
+    state.publish = { status: "not_started", noteId: null, url: null, message: "配图数量已修改，请重新生成文稿" };
+  }
+  return state.generationSettings;
+}
+
 export function selectTopic(state, topicId) {
   const topic = state.research?.topics?.find((item) => item.id === topicId);
   if (!topic) throw new Error("选题不存在，请重新运行热点研究");
@@ -128,21 +150,23 @@ export function archivePublishedStoryline(state, job, result) {
     (result.noteId && entry.noteId === result.noteId) || (result.url && entry.url === result.url)
   ));
   if (duplicate) return duplicate;
-  const topic = state.research?.topics?.find((item) => item.id === state.selectedTopicId) || null;
-  const direction = state.breakdown?.visualDirections?.find((item) => item.id === state.selectedVisualDirectionId) || null;
+  const snapshot = job.payload?.storySnapshot;
+  const topic = snapshot?.topic || state.research?.topics?.find((item) => item.id === state.selectedTopicId) || null;
+  const direction = snapshot?.visualDirection || state.breakdown?.visualDirections?.find((item) => item.id === state.selectedVisualDirectionId) || null;
+  const draft = snapshot?.draft || state.draft;
   const entry = {
     id: `story-${job.id}`,
     sequence: state.storyline.entries.length + 1,
     publishedAt: new Date().toISOString(),
     noteId: result.noteId || null,
     url: result.url || null,
-    positioningSnapshot: state.positioning,
+    positioningSnapshot: snapshot?.positioning || state.positioning,
     topic: topic ? { id: topic.id, title: topic.title, angle: topic.angle, reason: topic.reason } : null,
-    draft: state.draft ? {
-      title: state.draft.title,
-      body: state.draft.body,
-      tags: state.draft.tags || [],
-      imageCount: state.assets?.length || 0,
+    draft: draft ? {
+      title: draft.title,
+      body: draft.body,
+      tags: draft.tags || [],
+      imageCount: draft.imageCount ?? state.assets?.length ?? 0,
     } : null,
     visualDirection: direction ? { id: direction.id, name: direction.name } : null,
     publishEvidence: result.evidence || "",
@@ -151,4 +175,48 @@ export function archivePublishedStoryline(state, job, result) {
   state.storyline.entries.push(entry);
   state.storyline.updatedAt = entry.publishedAt;
   return entry;
+}
+
+export function mergeVerifiedStorylineEntries(state, job, result) {
+  if (!state.storyline) state.storyline = emptyStoryline();
+  const notes = Array.isArray(result?.notes) ? result.notes : [];
+  const ordered = [...notes].sort((left, right) => {
+    const leftTime = Date.parse(left.publishedAt);
+    const rightTime = Date.parse(right.publishedAt);
+    if (!Number.isFinite(leftTime) && !Number.isFinite(rightTime)) return 0;
+    if (!Number.isFinite(leftTime)) return 1;
+    if (!Number.isFinite(rightTime)) return -1;
+    return leftTime - rightTime;
+  });
+  let imported = 0;
+  for (const [index, note] of ordered.entries()) {
+    if (note.mediaKind !== "graphic" || !Number.isInteger(note.imageCount) || note.imageCount < 1 || (!note.noteId && !note.url)) continue;
+    const duplicate = state.storyline.entries.some((entry) => (
+      (note.noteId && entry.noteId === note.noteId) || (note.url && entry.url === note.url)
+    ));
+    if (duplicate) continue;
+    const parsedAt = Date.parse(note.publishedAt);
+    const publishedAt = Number.isFinite(parsedAt) ? new Date(parsedAt).toISOString() : new Date().toISOString();
+    state.storyline.entries.push({
+      id: `story-sync-${job.id}-${index + 1}`,
+      sequence: state.storyline.entries.length + 1,
+      publishedAt,
+      noteId: note.noteId || null,
+      url: note.url || null,
+      positioningSnapshot: state.positioning,
+      topic: { id: null, title: trimmed(note.title, 80), angle: "已发布笔记同步", reason: "从小红书创作后台核验补录" },
+      draft: { title: trimmed(note.title, 80), body: "", tags: (note.tags || []).map((tag) => trimmed(String(tag).replace(/^#/, ""), 24)).filter(Boolean).slice(0, 10), imageCount: note.imageCount },
+      visualDirection: null,
+      publishEvidence: note.evidence,
+      sourceJobId: job.id,
+      source: "creator_history_sync",
+    });
+    imported += 1;
+  }
+  if (imported > 0) {
+    state.storyline.entries.sort((left, right) => Date.parse(left.publishedAt) - Date.parse(right.publishedAt));
+    state.storyline.entries.forEach((entry, index) => { entry.sequence = index + 1; });
+    state.storyline.updatedAt = state.storyline.entries.at(-1)?.publishedAt || null;
+  }
+  return imported;
 }
