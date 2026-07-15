@@ -15,7 +15,7 @@
     "dev": "node server/index.mjs",
     "build": "vite build",
     "start": "node server/index.mjs --production",
-    "test": "node --test test/agent-runner.test.mjs test/render-cards.test.mjs test/workspace-editor.test.mjs",
+    "test": "node --test test/agent-runner.test.mjs test/render-cards.test.mjs test/viral-filter.test.mjs test/workspace-editor.test.mjs",
     "test:share": "npm --workspace @agent-xiaohongshu/share-site test",
     "test:all": "npm run test && npm run test:share",
     "build:share": "npm --workspace @agent-xiaohongshu/share-site run build",

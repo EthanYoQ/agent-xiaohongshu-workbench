@@ -6,9 +6,11 @@ import { promisify } from "node:util";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { AgentRunner, assertReaderFacingContent } from "./agent-runner.mjs";
+import { saveUploadedAvatar } from "./brand-character.mjs";
 import { createBrandCharacter, createBrandVisualIdentity, createDefaultState } from "./default-state.mjs";
 import { CARD_RENDERER_VERSION } from "./render-cards.mjs";
-import { applyDraftEdit, editTopic, emptyCopyVersions, emptyStoryline, selectTopic, storylineContext } from "./workspace-editor.mjs";
+import { applyDraftEdit, editTopic, emptyCopyVersions, emptyStoryline, resetProductionAfterBrandChange, resetProductionAfterTopic, selectTopic, setGenerationImageCount, storylineContext } from "./workspace-editor.mjs";
+import { isVerifiedViralSignal } from "./viral-filter.mjs";
 
 const execAsync = promisify(exec);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -54,6 +56,7 @@ const stateStore = {
       if (!("raw" in state.copyVersions)) { state.copyVersions.raw = null; migrated = true; }
       if (!("humanized" in state.copyVersions)) { state.copyVersions.humanized = null; migrated = true; }
       if (!("storyline" in state)) { state.storyline = emptyStoryline(); migrated = true; }
+      if (!("storylineSync" in state)) { state.storylineSync = { status: "not_started", imported: 0, updatedAt: null, message: "尚未同步创作后台" }; migrated = true; }
       if (!("humanization" in state)) { state.humanization = null; migrated = true; }
       if (!("review" in state)) {
         state.review = state.assets?.length > 0
@@ -68,8 +71,18 @@ const stateStore = {
         state.brandCharacter = createBrandCharacter();
         migrated = true;
       }
-      if (!state.brandVisualIdentity || state.brandVisualIdentity.version !== "agent-xhs-brand-v1") {
+      if (!Array.isArray(state.brandCharacter.series)) { state.brandCharacter.series = []; migrated = true; }
+      if (!state.brandCharacter.source) { state.brandCharacter.source = state.brandCharacter.avatar ? "legacy-local-reference" : "awaiting-user-upload"; migrated = true; }
+      if (!state.brandVisualIdentity) {
         state.brandVisualIdentity = createBrandVisualIdentity();
+        migrated = true;
+      } else if (state.brandVisualIdentity.version !== "agent-xhs-brand-v2") {
+        state.brandVisualIdentity = { ...createBrandVisualIdentity(), ...state.brandVisualIdentity, version: "agent-xhs-brand-v2" };
+        migrated = true;
+      }
+      if (!state.generationSettings) { state.generationSettings = { imageCount: 4 }; migrated = true; }
+      if (!Number.isInteger(state.generationSettings.imageCount) || state.generationSettings.imageCount < 1 || state.generationSettings.imageCount > 6) {
+        state.generationSettings.imageCount = 4;
         migrated = true;
       }
       if (state.breakdown && !state.breakdown.sourceSkillSet?.includes("lingzao")) {
@@ -82,7 +95,20 @@ const stateStore = {
         state.review = null;
         migrated = true;
       }
-      state.research.signals = state.research.signals.map((signal) => ({ mediaKind: "unknown", imageCount: 0, ...signal }));
+      if (state.research.signals.some((signal) => !signal.engagement || !("publishedAt" in signal))) migrated = true;
+      state.research.signals = state.research.signals.map((signal) => ({ mediaKind: "unknown", imageCount: 0, publishedAt: null, engagement: { likes: 0, collects: 0, comments: 0, verified: false, observedAt: null, source: "legacy" }, ...signal }));
+      if (state.research.signals.some((signal) => !isVerifiedViralSignal(signal))) {
+        state.research = {
+          mode: "not_started",
+          updatedAt: null,
+          summary: "旧热点证据未经过爆款互动门槛，已安全清空。请重新扫描图文爆款。",
+          signals: [],
+          topics: [],
+        };
+        state.selectedTopicId = null;
+        resetProductionAfterTopic(state, "旧热点证据已失效，请重新扫描图文爆款");
+        migrated = true;
+      }
       if (migrated) await this.write(state);
       return state;
     } catch {
@@ -131,6 +157,41 @@ app.put("/api/workspace", async (request, response) => {
   response.json(state);
 });
 
+app.put("/api/generation-settings", async (request, response) => {
+  if (runner.activeJobId) return response.status(409).json({ error: "Agent 任务执行中，暂时不能修改配图数量" });
+  try {
+    const state = await stateStore.read();
+    setGenerationImageCount(state, request.body?.imageCount);
+    await stateStore.write(state);
+    response.json(state);
+  } catch (error) {
+    response.status(400).json({ error: error.message });
+  }
+});
+
+app.post("/api/brand-character/upload", express.raw({ type: () => true, limit: "10mb" }), async (request, response) => {
+  if (runner.activeJobId) return response.status(409).json({ error: "Agent 任务执行中，暂时不能更换品牌角色" });
+  try {
+    const avatar = await saveUploadedAvatar({ root, buffer: request.body, contentType: request.headers["content-type"] });
+    const state = await stateStore.read();
+    resetProductionAfterBrandChange(state, "品牌角色母版已更换，等待生成并锁定系列形象");
+    state.brandCharacter = {
+      ...createBrandCharacter(),
+      status: "uploaded",
+      brief: "用户本地上传的品牌角色母版",
+      source: "user-upload",
+      avatar,
+      uploadedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    state.brandVisualIdentity = createBrandVisualIdentity();
+    await stateStore.write(state);
+    response.status(201).json(state);
+  } catch (error) {
+    response.status(400).json({ error: error.message });
+  }
+});
+
 app.get("/api/status", async (_request, response) => {
   const [codex, opencli] = await Promise.all([
     toolProbe("codex --version"),
@@ -151,6 +212,15 @@ app.post("/api/jobs/research", async (request, response) => {
     if (!positioning) return response.status(400).json({ error: "请先填写账号定位" });
     const state = await stateStore.read();
     response.status(202).json(await runner.createJob("research", { positioning, storylineContext: storylineContext(state.storyline?.entries || []) }));
+  } catch (error) {
+    response.status(409).json({ error: error.message });
+  }
+});
+
+app.post("/api/jobs/storyline-sync", async (_request, response) => {
+  try {
+    const state = await stateStore.read();
+    response.status(202).json(await runner.createJob("storyline_sync", { positioning: state.positioning }));
   } catch (error) {
     response.status(409).json({ error: error.message });
   }
@@ -198,9 +268,20 @@ app.put("/api/drafts/:version", async (request, response) => {
 
 app.post("/api/jobs/avatar", async (request, response) => {
   try {
+    const mode = String(request.body?.mode || "uploaded_reference");
+    const state = await stateStore.read();
+    if (mode === "uploaded_reference") {
+      if (!state.brandCharacter?.avatar?.absolutePath) return response.status(400).json({ error: "请先从本地上传头像图片" });
+      return response.status(202).json(await runner.createJob("avatar", {
+        mode,
+        brief: state.brandCharacter.brief || "用户本地上传的品牌角色母版",
+        sourcePath: state.brandCharacter.avatar.absolutePath,
+      }));
+    }
+    if (mode !== "generate_from_brief") return response.status(400).json({ error: "品牌角色生成方式无效" });
     const brief = String(request.body?.brief || "").trim().slice(0, 800);
     if (!brief) return response.status(400).json({ error: "请先描述头像中的人物、发型、穿着和绘制风格" });
-    response.status(202).json(await runner.createJob("avatar", { brief }));
+    response.status(202).json(await runner.createJob("avatar", { mode, brief }));
   } catch (error) {
     response.status(409).json({ error: error.message });
   }
@@ -217,7 +298,8 @@ app.post("/api/jobs/draft", async (request, response) => {
     if (!topic || state.breakdown?.topicId !== topic.id || !visualDirection) {
       return response.status(400).json({ error: "请先完成当前选题的热点拆解并确认动态视觉方向" });
     }
-    response.status(202).json(await runner.createJob("draft", { topic, visualDirection }));
+    const imageCount = Number(state.generationSettings?.imageCount || 4);
+    response.status(202).json(await runner.createJob("draft", { topic, visualDirection, imageCount }));
   } catch (error) {
     response.status(409).json({ error: error.message });
   }
@@ -243,7 +325,9 @@ app.post("/api/jobs/illustrate", async (_request, response) => {
       return response.status(400).json({ error: "请先完成中文去 AI 味，再生成配图" });
     }
     if (!visualDirection) return response.status(400).json({ error: "当前视觉方向已失效，请重新确认" });
-    response.status(202).json(await runner.createJob("illustrate", { visualDirection }));
+    const imageCount = Number(state.generationSettings?.imageCount || 4);
+    if (state.draft.imageCards?.length !== imageCount) return response.status(400).json({ error: "文稿卡片数量与本轮配图数量不一致，请重新生成文稿" });
+    response.status(202).json(await runner.createJob("illustrate", { visualDirection, imageCount }));
   } catch (error) {
     response.status(409).json({ error: error.message });
   }
@@ -299,8 +383,8 @@ app.post("/api/jobs/deconstruct", async (request, response) => {
       return response.status(400).json({ error: "请先生成并锁定头像角色，再让视觉方向适配该人物" });
     }
     const referencedSignals = topic.evidenceRefs.map((index) => state.research.signals[index]).filter(Boolean);
-    if (referencedSignals.length === 0 || referencedSignals.some((signal) => signal.mediaKind !== "graphic" || signal.imageCount < 1)) {
-      return response.status(400).json({ error: "当前选题缺少已通过媒体校验的图文热点，请先重新扫描" });
+    if (referencedSignals.length === 0 || referencedSignals.some((signal) => signal.mediaKind !== "graphic" || signal.imageCount < 1 || !isVerifiedViralSignal(signal))) {
+      return response.status(400).json({ error: "当前选题缺少已通过媒体与爆款门槛校验的图文热点，请重新扫描" });
     }
     response.status(202).json(await runner.createJob("deconstruct", { topic }));
   } catch (error) {
@@ -310,18 +394,13 @@ app.post("/api/jobs/deconstruct", async (request, response) => {
 
 app.put("/api/character-lock", async (request, response) => {
   const state = await stateStore.read();
-  if (state.brandCharacter?.status !== "ready" || !state.brandCharacter?.avatar) {
-    return response.status(400).json({ error: "尚未生成可锁定的头像角色" });
+  if (state.brandCharacter?.status !== "ready" || !state.brandCharacter?.avatar || state.brandCharacter.series?.length !== 6) {
+    return response.status(400).json({ error: "请先基于上传头像生成完整的 6 个系列品牌形象" });
   }
   state.brandCharacter.locked = Boolean(request.body?.locked);
+  state.brandCharacter.lockedAt = state.brandCharacter.locked ? new Date().toISOString() : null;
   if (!state.brandCharacter.locked) {
-    state.breakdown = null;
-    state.selectedVisualDirectionId = null;
-    state.draft = null;
-    state.copyVersions = emptyCopyVersions();
-    state.humanization = null;
-    state.assets = [];
-    state.review = null;
+    resetProductionAfterBrandChange(state, "品牌角色已解除锁定，后续内容需要重新确认");
   }
   await stateStore.write(state);
   response.json(state);
@@ -337,10 +416,23 @@ app.post("/api/jobs/publish", async (request, response) => {
     if (!state.draft || state.draft.mode !== "humanized" || state.assets.length === 0 || state.review?.status !== "approved" || state.assets.some((asset) => asset.rendererVersion !== CARD_RENDERER_VERSION)) {
       return response.status(400).json({ error: "请先完成文稿、去 AI 味、配图，并在审稿台确认预览" });
     }
-    response.status(202).json(await runner.createJob("publish", { mode, confirmedAt: new Date().toISOString() }));
+    const topic = state.research?.topics?.find((item) => item.id === state.selectedTopicId) || null;
+    const visualDirection = state.breakdown?.visualDirections?.find((item) => item.id === state.selectedVisualDirectionId) || null;
+    const storySnapshot = {
+      positioning: state.positioning,
+      topic: topic ? { id: topic.id, title: topic.title, angle: topic.angle, reason: topic.reason } : null,
+      draft: { title: state.draft.title, body: state.draft.body, tags: state.draft.tags || [], imageCount: state.assets.length },
+      visualDirection: visualDirection ? { id: visualDirection.id, name: visualDirection.name } : null,
+    };
+    response.status(202).json(await runner.createJob("publish", { mode, confirmedAt: new Date().toISOString(), storySnapshot }));
   } catch (error) {
     response.status(409).json({ error: error.message });
   }
+});
+
+app.use((error, _request, response, next) => {
+  if (error?.type === "entity.too.large") return response.status(413).json({ error: "头像图片不能超过 10MB" });
+  return next(error);
 });
 
 if (isProduction) {

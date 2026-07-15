@@ -25,6 +25,10 @@
 - `npm test` 通过。
 - `GET /api/status` 返回 `codex.installed=true` 与 `opencli.installed=true`。
 - 新工作区没有继承任何他人的账号定位、热点 URL、文稿、角色图片或发布故事线。
+- 品牌角色从用户本地上传的 PNG、JPG 或 WebP 母版开始；图片只保存在被 Git 忽略的 `public/brand/avatars/`，系列动作只保存在 `public/brand/actions/`。
+- 用户选择的配图数量必须是 1–6，并贯穿初稿卡片、去 AI 味、角色动作、渲染预览和发布。
+- 热点证据必须同时通过纯图文媒体校验和互动门槛：赞至少 300、藏至少 100，或赞藏合计至少 400；评论不能单独达标。
+- 故事线缺失时使用工作台的“同步已发布笔记”入口进行创作后台只读恢复；不要把 failed、unknown 或 draft_saved 本地任务手动改成已发布。
 
 ## 禁止事项
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyDraftEdit, archivePublishedStoryline, editTopic, storylineContext } from "../server/workspace-editor.mjs";
+import { applyDraftEdit, archivePublishedStoryline, editTopic, mergeVerifiedStorylineEntries, setGenerationImageCount, storylineContext } from "../server/workspace-editor.mjs";
 
 function draft(mode = "raw") {
   return {
@@ -31,6 +31,7 @@ function stateFixture() {
     assets: [{ id: "asset-1" }],
     review: { status: "approved" },
     publish: { status: "ready" },
+    generationSettings: { imageCount: 2 },
     storyline: { entries: [], updatedAt: null },
   };
 }
@@ -102,4 +103,51 @@ test("failed or unknown publish never enters storyline", () => {
   archivePublishedStoryline(state, { id: "publish-unknown" }, { status: "unknown", url: "https://example.invalid/unverified" });
   archivePublishedStoryline(state, { id: "publish-draft" }, { status: "draft_saved", noteId: null, url: null });
   assert.equal(state.storyline.entries.length, 0);
+});
+
+test("publish archives the immutable job snapshot even if workspace changes during execution", () => {
+  const state = stateFixture();
+  const storySnapshot = {
+    positioning: "发布时定位",
+    topic: { id: "topic-snapshot", title: "发布时选题", angle: "发布时角度", reason: "发布时理由" },
+    draft: { title: "发布时标题", body: "发布时正文", tags: ["发布快照"], imageCount: 2 },
+    visualDirection: { id: "direction-snapshot", name: "发布时视觉" },
+  };
+  state.research.topics[0].title = "后来修改的选题";
+  archivePublishedStoryline(state, { id: "publish-snapshot", payload: { storySnapshot } }, { status: "published", noteId: "note-snapshot", url: null, evidence: "已核验" });
+  assert.equal(state.storyline.entries[0].topic.title, "发布时选题");
+  assert.equal(state.storyline.entries[0].draft.title, "发布时标题");
+  assert.equal(state.storyline.entries[0].positioningSnapshot, "发布时定位");
+});
+
+test("creator history sync imports only verified graphic posts and deduplicates by note identity", () => {
+  const state = stateFixture();
+  const result = {
+    notes: [
+      { title: "第二篇", noteId: "note-2", url: "https://example.invalid/note-2", publishedAt: "2026-07-14T12:00:00+08:00", tags: ["复盘"], imageCount: 3, mediaKind: "graphic", evidence: "创作后台显示已发布" },
+      { title: "第一篇", noteId: "note-1", url: "https://example.invalid/note-1", publishedAt: "2026-07-13T12:00:00+08:00", tags: ["起点"], imageCount: 2, mediaKind: "graphic", evidence: "创作后台显示已发布" },
+    ],
+  };
+  assert.equal(mergeVerifiedStorylineEntries(state, { id: "sync-1" }, result), 2);
+  assert.equal(mergeVerifiedStorylineEntries(state, { id: "sync-2" }, result), 0);
+  assert.equal(state.storyline.entries.length, 2);
+  assert.equal(state.storyline.entries[0].noteId, "note-1");
+  assert.equal(state.storyline.entries[1].sequence, 2);
+  assert.equal(state.storyline.entries[1].source, "creator_history_sync");
+});
+
+test("image count accepts 1-6 and invalidates only downstream production when changed", () => {
+  const state = stateFixture();
+  const breakdown = state.breakdown;
+  setGenerationImageCount(state, 6);
+  assert.equal(state.generationSettings.imageCount, 6);
+  assert.equal(state.breakdown, breakdown);
+  assert.equal(state.draft, null);
+  assert.equal(state.assets.length, 0);
+  assert.equal(state.publish.message, "配图数量已修改，请重新生成文稿");
+  setGenerationImageCount(state, 1);
+  assert.equal(state.generationSettings.imageCount, 1);
+  assert.throws(() => setGenerationImageCount(state, 0), /1 到 6/);
+  assert.throws(() => setGenerationImageCount(state, 7), /1 到 6/);
+  assert.throws(() => setGenerationImageCount(state, 2.5), /1 到 6/);
 });

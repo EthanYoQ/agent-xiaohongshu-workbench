@@ -5,12 +5,14 @@ import path from "node:path";
 import test from "node:test";
 import sharp from "sharp";
 import { AgentRunner } from "../server/agent-runner.mjs";
+import { saveUploadedAvatar } from "../server/brand-character.mjs";
+import { isVerifiedViralSignal } from "../server/viral-filter.mjs";
 
 function fixtureState() {
   return {
     positioning: "面向内容创作者的图文工作流",
     research: {
-      signals: [{ label: "内容规划难题", mediaKind: "graphic", imageCount: 6, url: "https://example.invalid/note" }],
+      signals: [{ label: "内容规划难题", mediaKind: "graphic", imageCount: 6, url: "https://example.invalid/note", publishedAt: null, engagement: { likes: 320, collects: 90, comments: 18, verified: true, observedAt: "2026-07-15T00:00:00Z", source: "note_detail" } }],
       topics: [{ id: "topic-1", title: "内容计划如何从热点变成原创", evidenceRefs: [0] }],
     },
     selectedTopicId: "topic-1",
@@ -22,6 +24,7 @@ function fixtureState() {
       palette: { paper: "#FFF8EA", ink: "#332923", primary: "#5A3828", accent: "#F18C70", soft: "#F4DDB9" },
       topicAccents: ["#F18C70", "#D8A05E"],
     },
+    generationSettings: { imageCount: 4 },
     draft: null,
     copyVersions: { raw: null, humanized: null },
     humanization: null,
@@ -29,8 +32,56 @@ function fixtureState() {
     review: null,
     publish: { status: "not_started" },
     storyline: { entries: [], updatedAt: null },
+    storylineSync: { status: "not_started", imported: 0, updatedAt: null, message: "尚未同步" },
   };
 }
+
+test("viral filter rejects one-like notes and accepts only verified threshold signals", () => {
+  const base = { mediaKind: "graphic", imageCount: 2, engagement: { likes: 1, collects: 0, comments: 1, verified: true } };
+  assert.equal(isVerifiedViralSignal(base), false);
+  assert.equal(isVerifiedViralSignal({ ...base, engagement: { ...base.engagement, likes: 300 } }), true);
+  assert.equal(isVerifiedViralSignal({ ...base, engagement: { ...base.engagement, collects: 100 } }), true);
+  assert.equal(isVerifiedViralSignal({ ...base, engagement: { ...base.engagement, likes: 250, collects: 150 } }), true);
+  assert.equal(isVerifiedViralSignal({ ...base, engagement: { ...base.engagement, likes: 999, verified: false } }), false);
+});
+
+test("research result rejects low-engagement evidence even when the agent marks it verified", async () => {
+  let state = fixtureState();
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({ root: process.cwd(), stateStore });
+  const low = {
+    status: "partial",
+    evidenceMode: "none",
+    summary: "互动不足",
+    blocker: "没有足够爆款",
+    signals: [{ label: "低互动", heat: 1, evidence: "1赞1评", url: "https://example.invalid/low", noteId: "low", mediaKind: "graphic", imageCount: 1, publishedAt: null, engagement: { likes: 1, collects: 0, comments: 1, verified: true, observedAt: "2026-07-15T00:00:00Z", source: "note_detail" } }],
+    topics: [],
+  };
+  await assert.rejects(runner.applyResult({ type: "research", payload: { positioning: state.positioning } }, low), /爆款门槛/);
+});
+
+test("storyline sync prompt is read-only and excludes comments and non-published records", () => {
+  const runner = new AgentRunner({ root: process.cwd(), stateStore: { read: async () => fixtureState(), write: async () => {} } });
+  const prompt = runner.buildPrompt({ type: "storyline_sync", payload: {} }, fixtureState());
+  assert.match(prompt, /严格只读任务/);
+  assert.match(prompt, /不读取评论内容/);
+  assert.match(prompt, /排除草稿、审核中、发布失败、视频/);
+});
+
+test("storyline sync result updates recovery status and imports verified posts", async () => {
+  let state = fixtureState();
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({ root: process.cwd(), stateStore });
+  await runner.applyResult({ id: "sync-result", type: "storyline_sync", payload: {} }, {
+    status: "success",
+    summary: "已读取创作后台",
+    blocker: null,
+    notes: [{ title: "已发布图文", noteId: "note-synced", url: "https://example.invalid/synced", publishedAt: "2026-07-15T08:00:00+08:00", tags: ["内容"], imageCount: 2, mediaKind: "graphic", evidence: "创作后台显示已发布" }],
+  });
+  assert.equal(state.storyline.entries.length, 1);
+  assert.equal(state.storylineSync.status, "success");
+  assert.equal(state.storylineSync.imported, 1);
+});
 
 function breakdownResult(mediaKind = "graphic") {
   const palette = { paper: "#F8F3EA", ink: "#202523", primary: "#C94F43", accent: "#D7A36A", soft: "#DED8CE" };
@@ -80,7 +131,7 @@ test("draft result rejects production instructions inside reader-facing card cop
   const runner = new AgentRunner({ root: process.cwd(), stateStore });
   await assert.rejects(
     runner.applyResult(
-      { type: "draft", payload: { topic: state.research.topics[0], visualDirection: { id: "direction-1" } } },
+      { type: "draft", payload: { topic: state.research.topics[0], visualDirection: { id: "direction-1" }, imageCount: 1 } },
       {
         title: "测试",
         body: "正文",
@@ -102,7 +153,7 @@ test("draft result rejects internal visual language in any visible card field", 
   const runner = new AgentRunner({ root: process.cwd(), stateStore });
   await assert.rejects(
     runner.applyResult(
-      { type: "draft", payload: { topic: state.research.topics[0], visualDirection: direction } },
+      { type: "draft", payload: { topic: state.research.topics[0], visualDirection: direction, imageCount: 1 } },
       {
         title: "测试",
         body: "正文",
@@ -155,12 +206,19 @@ test("humanize result becomes the only draft allowed to proceed to illustration"
 test("avatar result locks identity metadata to a real project brand asset", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "xhs-avatar-test-"));
   const avatarPath = path.join(root, "public", "brand", "avatars", "avatar.png");
+  const seriesDir = path.join(root, "public", "brand", "actions", "series-test");
   await fs.mkdir(path.dirname(avatarPath), { recursive: true });
+  await fs.mkdir(seriesDir, { recursive: true });
   await fs.writeFile(avatarPath, "fixture");
+  const seriesAssets = await Promise.all(["打招呼", "解释", "思考", "记录", "提醒", "庆祝"].map(async (action, index) => {
+    const filePath = path.join(seriesDir, `${index + 1}.png`);
+    await fs.writeFile(filePath, "fixture");
+    return { action, filePath };
+  }));
   let state = fixtureState();
   const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
   const runner = new AgentRunner({ root, stateStore });
-  await runner.applyResult({ type: "avatar", payload: { brief: "短发与浅色开衫" } }, {
+  await runner.applyResult({ type: "avatar", payload: { mode: "uploaded_reference", brief: "本地上传母版", sourcePath: avatarPath } }, {
     status: "success",
     prompt: "avatar prompt",
     assetPath: avatarPath,
@@ -169,13 +227,53 @@ test("avatar result locks identity metadata to a real project brand asset", asyn
       faceAndHair: "圆脸，短发",
       outfit: "浅色上衣与深色长裤",
       renderingStyle: "清爽扁平插画",
-      invariants: ["脸部不变", "发型不变", "穿着不变"],
+      invariants: ["脸部不变", "发型不变", "穿着不变", "比例不变", "渲染不变"],
     },
+    brandVisualIdentity: {
+      name: "浅杏内容手账",
+      palette: { paper: "#FFF8EA", ink: "#332923", primary: "#5A3828", accent: "#F18C70", soft: "#F4DDB9" },
+      topicAccents: ["#F18C70", "#D8A05E", "#9E6D55", "#DB6B5D"],
+      typography: "圆体标题与清爽正文",
+      composition: "左上标题，中央信息，右下角色",
+      characterPlacement: "角色固定在右下角",
+      visualRules: ["底色固定", "主色固定", "留白固定", "角色位置固定"],
+    },
+    seriesAssets,
     blocker: "",
   });
   assert.equal(state.brandCharacter.status, "ready");
   assert.equal(state.brandCharacter.locked, false);
   assert.equal(state.brandCharacter.avatar.url, "/brand/avatars/avatar.png");
+  assert.equal(state.brandCharacter.series.length, 6);
+  assert.equal(state.brandCharacter.source, "user-upload");
+  assert.equal(state.brandVisualIdentity.version, "agent-xhs-brand-v2");
+});
+
+test("uploaded avatar is validated, normalized and kept inside the local brand directory", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "xhs-avatar-upload-test-"));
+  const buffer = await sharp({ create: { width: 480, height: 360, channels: 3, background: "#F4DDB9" } }).jpeg().toBuffer();
+  const avatar = await saveUploadedAvatar({ root, buffer, contentType: "image/jpeg" });
+  const metadata = await sharp(avatar.absolutePath).metadata();
+  assert.equal(metadata.format, "png");
+  assert.equal(avatar.url.startsWith("/brand/avatars/avatar-"), true);
+  assert.equal(path.dirname(avatar.absolutePath), path.join(root, "public", "brand", "avatars"));
+});
+
+test("uploaded avatar rejects unsupported or undersized images", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "xhs-avatar-reject-test-"));
+  const tiny = await sharp({ create: { width: 128, height: 128, channels: 3, background: "#ffffff" } }).png().toBuffer();
+  await assert.rejects(saveUploadedAvatar({ root, buffer: tiny, contentType: "image/png" }), /不能小于 256px/);
+  await assert.rejects(saveUploadedAvatar({ root, buffer: tiny, contentType: "image/gif" }), /仅支持 PNG/);
+});
+
+test("draft result must match the user-selected image count", async () => {
+  let state = fixtureState();
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({ root: process.cwd(), stateStore });
+  await assert.rejects(runner.applyResult(
+    { type: "draft", payload: { topic: state.research.topics[0], visualDirection: { id: "direction-1" }, imageCount: 2 } },
+    { title: "标题", body: "正文", tags: ["内容"], imageCards: [{ kicker: "01", headline: "一张", body: "正文", characterAction: "解释" }], editorNote: "" },
+  ), /必须生成用户选择的 2 张内容卡/);
 });
 
 test("copy revision rerenders the preview and returns it to pending review", async () => {

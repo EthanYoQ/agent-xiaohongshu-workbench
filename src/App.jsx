@@ -141,8 +141,10 @@ export function App() {
   const [publishMode, setPublishMode] = useState("publish_now");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [selectedAssetIndex, setSelectedAssetIndex] = useState(0);
+  const [seriesPreviewIndex, setSeriesPreviewIndex] = useState(null);
   const [reviewInput, setReviewInput] = useState("");
   const [revisionScope, setRevisionScope] = useState("both");
+  const [uploadBusy, setUploadBusy] = useState(false);
 
   const selectedTopic = useMemo(() => workspace?.research?.topics?.find((item) => item.id === workspace.selectedTopicId), [workspace]);
   const selectedDirection = useMemo(() => workspace?.breakdown?.visualDirections?.find((item) => item.id === workspace.selectedVisualDirectionId), [workspace]);
@@ -198,6 +200,51 @@ export function App() {
     } catch (error) { setMessage(error.message); }
   }
 
+  async function uploadBrandCharacter(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setMessage("头像仅支持 PNG、JPG 或 WebP 图片。");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setMessage("头像图片不能超过 10MB。");
+      return;
+    }
+    setUploadBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/brand-character/upload", { method: "POST", headers: { "Content-Type": file.type }, body: file });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "头像上传失败");
+      setWorkspace(data);
+      setMessage("头像已保存在本地。请确认预览后生成系列品牌形象。");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
+  async function toggleCharacterLock() {
+    try {
+      const next = await api("/api/character-lock", { method: "PUT", body: JSON.stringify({ locked: !workspace.brandCharacter.locked }) });
+      setWorkspace(next);
+      setMessage(next.brandCharacter.locked ? "品牌角色母版与系列形象已锁定。" : "品牌角色已解除锁定，后续内容需要重新确认。");
+    } catch (error) { setMessage(error.message); }
+  }
+
+  async function chooseImageCount(imageCount) {
+    if (imageCount === workspace.generationSettings?.imageCount) return;
+    if (workspace.draft && !window.confirm("修改配图数量会清空当前文稿、配图和审稿结果，是否继续？")) return;
+    try {
+      const next = await api("/api/generation-settings", { method: "PUT", body: JSON.stringify({ imageCount }) });
+      setWorkspace(next);
+      setMessage(`本轮将生成 ${imageCount} 张配图。`);
+    } catch (error) { setMessage(error.message); }
+  }
+
   async function selectTopic(topicId) {
     if (topicId === workspace.selectedTopicId) return true;
     try {
@@ -238,10 +285,13 @@ export function App() {
   if (!workspace) return <main className="boot-screen">正在打开本地工作台…</main>;
 
   const isDemo = workspace.research.mode === "demo";
-  const characterReady = workspace.brandCharacter?.status === "ready" && workspace.brandCharacter?.avatar;
+  const characterHasAvatar = Boolean(workspace.brandCharacter?.avatar);
+  const characterSeries = workspace.brandCharacter?.series || [];
+  const characterReady = workspace.brandCharacter?.status === "ready" && characterHasAvatar && characterSeries.length === 6;
   const characterLocked = characterReady && workspace.brandCharacter.locked;
+  const imageCount = Number(workspace.generationSettings?.imageCount || 4);
   const topicSignals = selectedTopic?.evidenceRefs?.map((index) => workspace.research.signals[index]).filter(Boolean) || [];
-  const topicHasVerifiedGraphics = topicSignals.length > 0 && topicSignals.every((signal) => signal.mediaKind === "graphic" && signal.imageCount > 0);
+  const topicHasVerifiedGraphics = topicSignals.length > 0 && topicSignals.every((signal) => signal.mediaKind === "graphic" && signal.imageCount > 0 && signal.engagement?.verified === true);
   const breakdownReady = workspace.breakdown?.topicId === selectedTopic?.id && workspace.breakdown?.status === "success";
   const rawDraftReady = workspace.draft?.mode === "raw";
   const humanizedDraftReady = workspace.draft?.mode === "humanized";
@@ -253,6 +303,7 @@ export function App() {
   const hasPublishableDraft = reviewApproved && workspace.publish.status !== "published";
   const selectedAsset = workspace.assets[selectedAssetIndex] || workspace.assets[0];
   const selectedCard = workspace.draft?.imageCards?.[selectedAssetIndex];
+  const selectedSeriesAsset = seriesPreviewIndex === null ? null : characterSeries[seriesPreviewIndex];
   const progressStep = ["published", "draft_saved"].includes(workspace.publish.status) ? 9 : reviewApproved ? 9 : assetsReady ? 8 : humanizedDraftReady ? 7 : rawDraftReady ? 6 : breakdownReady ? 5 : characterLocked ? (selectedTopic ? 4 : workspace.research.topics.length ? 3 : 2) : 1;
 
   return (
@@ -278,35 +329,41 @@ export function App() {
 
           <section className="character-section">
             <div className="subheading-row">
-              <div><p className="eyebrow">02 / 品牌角色</p><h2>角色、穿着与长期视觉已锁定</h2></div>
-              <StatusPill tone={characterLocked ? "live" : "warning"}>{characterLocked ? "品牌母版生效" : "母版未就绪"}</StatusPill>
+              <div><p className="eyebrow">02 / 品牌角色</p><h2>{characterLocked ? "角色、穿着与长期视觉已锁定" : "上传头像，固化系列品牌形象"}</h2></div>
+              <StatusPill tone={characterLocked ? "live" : "warning"}>{characterLocked ? "品牌母版生效" : characterReady ? "等待锁定" : characterHasAvatar ? "等待生成系列" : "尚未上传"}</StatusPill>
             </div>
             <div className="character-builder">
-              <div className="avatar-stage">
-                {characterReady ? <img src={workspace.brandCharacter.avatar.url} alt="账号头像角色" /> : <div className="avatar-empty"><strong>头像角色</strong><span>生成后在这里确认人物与穿着</span></div>}
+              <div className="avatar-column">
+                <div className="avatar-stage">
+                  {characterHasAvatar ? <img src={workspace.brandCharacter.avatar.url} alt="本地上传的账号头像角色" /> : <div className="avatar-empty"><strong>头像角色</strong><span>从本地选择人物母版图片</span></div>}
+                </div>
+                <label className="secondary-button avatar-upload-button" htmlFor="brand-avatar-upload">{uploadBusy ? "正在上传" : characterHasAvatar ? "更换本地图片" : "上传本地图片"}</label>
+                <input id="brand-avatar-upload" className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadBrandCharacter} disabled={busy || uploadBusy} />
+                <small>PNG / JPG / WebP，最大 10MB，宽高至少 256px</small>
               </div>
               <div className="character-controls">
                 <label>品牌母版</label>
-                <p className="brand-description">品牌角色由你在本地描述并生成。每张配图会根据该页文案生成不同动作，同时保持已锁定的人物身份、主要穿着与绘制方式一致。</p>
-                {workspace.brandCharacter?.identityLock && <p className="identity-summary"><strong>固定穿着：</strong>{workspace.brandCharacter.identityLock.outfit}</p>}
-                <div className="brand-theme">
-                  <div><strong>{workspace.brandVisualIdentity?.name}</strong><span>{workspace.brandVisualIdentity?.typography}</span></div>
-                  <Palette palette={workspace.brandVisualIdentity?.palette} />
+                <p className="brand-description">上传图片后，Agent 会提取人物身份、脸部与发型、穿着、比例和绘制方式，并生成 6 个只改变动作、手势与表情的系列形象。所有内容配图都会沿用这套母版。</p>
+                {workspace.brandCharacter?.identityLock && <div className="identity-summary"><p><strong>人物与发型：</strong>{workspace.brandCharacter.identityLock.faceAndHair}</p><p><strong>固定穿着：</strong>{workspace.brandCharacter.identityLock.outfit}</p><p><strong>绘制方式：</strong>{workspace.brandCharacter.identityLock.renderingStyle}</p></div>}
+                {characterReady && <><div className="brand-theme"><div><strong>{workspace.brandVisualIdentity?.name}</strong><span>{workspace.brandVisualIdentity?.typography}</span></div><Palette palette={workspace.brandVisualIdentity?.palette} /></div><p className="brand-rule">{workspace.brandVisualIdentity?.composition}</p></>}
+                <div className="character-actions">
+                  {characterHasAvatar && !characterReady && <button className="primary-small" onClick={() => startJob("/api/jobs/avatar", { mode: "uploaded_reference" })} disabled={busy || uploadBusy}>{busy && job.type === "avatar" ? "Agent 正在生成系列" : "生成 6 个品牌系列形象"}</button>}
+                  {characterReady && <button className={characterLocked ? "secondary-button" : "primary-small"} onClick={toggleCharacterLock} disabled={busy || uploadBusy}>{characterLocked ? "解除角色锁定" : "确认并锁定品牌母版"}</button>}
                 </div>
-                <p className="brand-rule">{workspace.brandVisualIdentity?.composition}</p>
-                <div className="lock-button lock-button--active">人物、穿着、配色与右下角位置已锁定</div>
+                {characterHasAvatar && <small>更换母版或解除锁定会使旧拆解、文稿和配图失效，但不会修改已发布故事线。</small>}
               </div>
             </div>
+            {characterSeries.length > 0 && <div className="brand-series"><div className="brand-series-heading"><div><strong>系列品牌形象</strong><span>母版身份不变，只切换动作与表情；生成后可逐张查看原图</span></div><em>{characterSeries.length} / 6</em></div><div className="brand-series-grid">{characterSeries.map((asset, index) => <figure key={`${asset.action}-${index}`}><img src={asset.url} alt={`品牌角色动作：${asset.action}`} /><figcaption><span>{asset.action}</span><button className="series-preview-button" onClick={() => setSeriesPreviewIndex(index)} aria-label={`预览品牌角色动作：${asset.action}`}>预览</button></figcaption></figure>)}</div></div>}
           </section>
 
           <section className="evidence-section">
-            <div className="subheading-row"><div><p className="eyebrow">03 / 图文信号</p><h2>仅保留通过媒体校验的图文笔记</h2></div><span className="timestamp">{formatTime(workspace.research.updatedAt)}</span></div>
+            <div className="subheading-row"><div><p className="eyebrow">03 / 图文信号</p><h2>只保留通过媒体与爆款门槛的图文笔记</h2></div><span className="timestamp">{formatTime(workspace.research.updatedAt)}</span></div>
             <p className="research-summary">{workspace.research.summary}</p>
             <div className="signal-list">
               {workspace.research.signals.map((signal, index) => (
                 <article className="signal-row" key={`${signal.label}-${index}`}>
                   <div className="signal-rank">{String(index + 1).padStart(2, "0")}</div>
-                  <div className="signal-copy"><div className="signal-title-line"><strong>{signal.label}</strong><span>{signal.heat}</span>{signal.mediaKind === "graphic" && <em>图文 · {signal.imageCount} 图</em>}</div><p>{signal.evidence}</p>{signal.url && <a href={signal.url} target="_blank" rel="noreferrer">查看原始笔记</a>}</div>
+                  <div className="signal-copy"><div className="signal-title-line"><strong>{signal.label}</strong><span>{signal.heat}</span>{signal.mediaKind === "graphic" && <em>图文 · {signal.imageCount} 图</em>}{signal.engagement?.verified && <em className="viral-badge">爆款已核验</em>}</div><p>{signal.evidence}</p>{signal.engagement?.verified ? <small className="engagement-line">赞 {signal.engagement.likes} · 藏 {signal.engagement.collects} · 评 {signal.engagement.comments}</small> : <small className="engagement-line engagement-line--warning">旧证据未通过爆款门槛，请重新扫描</small>}{signal.url && <a href={signal.url} target="_blank" rel="noreferrer">查看原始笔记</a>}</div>
                   <div className="heat-track" aria-label={`相对热度 ${signal.heat}`}><span style={{ width: `${signal.heat}%` }} /></div>
                 </article>
               ))}
@@ -321,9 +378,10 @@ export function App() {
           </section>
 
           <section className="storyline-section" data-testid="storyline-section">
-            <div className="subheading-row"><div><p className="eyebrow">长期内容资产</p><h2>账号故事线</h2></div><span className="topic-count">已发布 {storylineEntries.length} 篇</span></div>
+            <div className="subheading-row"><div><p className="eyebrow">长期内容资产</p><h2>账号故事线</h2></div><div className="storyline-header-actions"><span className="topic-count">已发布 {storylineEntries.length} 篇</span><button className="secondary-button" onClick={() => startJob("/api/jobs/storyline-sync", {})} disabled={busy}>{busy && job.type === "storyline_sync" ? "正在同步" : "同步已发布笔记"}</button></div></div>
+            <p className="storyline-sync-status">{workspace.storylineSync?.message || "尚未同步创作后台"}{workspace.storylineSync?.updatedAt ? ` · ${formatTime(workspace.storylineSync.updatedAt)}` : ""}</p>
             <div className="tone-anchor"><span>账号调性锚点</span><strong>{workspace.positioning}</strong><p>下一轮 Agent 会读取最近 12 篇已发布主题，兼顾故事线承接、相邻扩展与标题查重。</p></div>
-            {storylineEntries.length === 0 ? <div className="storyline-empty"><strong>第一篇发布后，故事线会从这里开始</strong><p>只有拿到小红书笔记 ID 或 URL 的成功发布才会入档；失败或结果不明不会计入。</p></div> : <div className="storyline-list">{[...storylineEntries].reverse().map((entry) => <article className="storyline-entry" key={entry.id}><span className="story-sequence">{String(entry.sequence).padStart(2, "0")}</span><div><div className="storyline-entry-heading"><strong>{entry.topic?.title || entry.draft?.title}</strong><time>{formatTime(entry.publishedAt)}</time></div><p>{entry.topic?.angle}</p><small>{entry.topic?.reason}</small><div className="story-tags">{entry.draft?.tags?.slice(0, 5).map((tag) => <span key={tag}>#{tag}</span>)}</div>{entry.url && <a href={entry.url} target="_blank" rel="noreferrer">查看已发布笔记</a>}</div></article>)}</div>}
+            {storylineEntries.length === 0 ? <div className="storyline-empty"><strong>尚未发现可核验的已发布笔记</strong><p>自动发布只有取得笔记 ID 或 URL 才入档；也可点击“同步已发布笔记”，从当前账号创作后台只读补录。</p></div> : <div className="storyline-list">{[...storylineEntries].reverse().map((entry) => <article className="storyline-entry" key={entry.id}><span className="story-sequence">{String(entry.sequence).padStart(2, "0")}</span><div><div className="storyline-entry-heading"><strong>{entry.topic?.title || entry.draft?.title}</strong><time>{formatTime(entry.publishedAt)}</time></div><p>{entry.topic?.angle}</p><small>{entry.topic?.reason}</small><div className="story-tags">{entry.draft?.tags?.slice(0, 5).map((tag) => <span key={tag}>#{tag}</span>)}</div>{entry.url && <a href={entry.url} target="_blank" rel="noreferrer">查看已发布笔记</a>}</div></article>)}</div>}
           </section>
         </section>
 
@@ -333,7 +391,7 @@ export function App() {
 
             {!breakdownReady ? (
               <section className="breakdown-empty">
-                <div><p className="eyebrow">05 / 热点拆解</p><h3>先理解为什么它有效，再生成原创内容</h3><p>{!characterLocked ? "请先锁定品牌角色。" : topicHasVerifiedGraphics ? "Agent 将用一个 Lingzao GitHub Skill 完成爆款类型、标题封面、逐页结构、互动机制和原创改写拆解。" : "当前热点尚未通过图文媒体校验，请先重新扫描图文热点。"}</p></div>
+                <div><p className="eyebrow">05 / 热点拆解</p><h3>先理解为什么它有效，再生成原创内容</h3><p>{!characterLocked ? "请先锁定品牌角色。" : topicHasVerifiedGraphics ? "Agent 将用一个 Lingzao GitHub Skill 完成爆款类型、标题封面、逐页结构、互动机制和原创改写拆解。" : "当前热点尚未同时通过图文媒体与爆款门槛，请先重新扫描。"}</p></div>
                 <button className="generate-button" onClick={() => startJob("/api/jobs/deconstruct", { topicId: selectedTopic?.id })} disabled={busy || !selectedTopic || !topicHasVerifiedGraphics || !characterLocked}>{busy && job.type === "deconstruct" ? "Agent 正在用 Lingzao 拆解" : "用 Lingzao 拆解热点"}</button>
               </section>
             ) : (
@@ -351,9 +409,10 @@ export function App() {
                       return <button className={`direction-card ${active ? "direction-card--active" : ""}`} key={direction.id} onClick={() => setWorkspace((current) => ({ ...current, selectedVisualDirectionId: direction.id }))} disabled={busy || Boolean(workspace.draft)}><span className="direction-top"><Palette palette={direction.palette} />{direction.id === workspace.breakdown.recommendedDirectionId && <em>Agent 推荐</em>}</span><strong>{direction.name}</strong><small>{direction.rationale}</small><span className="fit-line">选题：{direction.topicFit}</span><span className="fit-line">角色：{direction.avatarFit}</span></button>;
                     })}
                   </div>
+                  <div className="image-count-selector"><div><strong>本轮配图数量</strong><span>数量会同步到文稿卡片、角色动作、预览与发布</span></div><div className="image-count-options" role="group" aria-label="选择本轮配图数量">{[1, 2, 3, 4, 5, 6].map((count) => <button className={count === imageCount ? "image-count-option image-count-option--active" : "image-count-option"} key={count} onClick={() => chooseImageCount(count)} disabled={busy} aria-pressed={count === imageCount}>{count}</button>)}</div></div>
                 </section>
 
-                {!workspace.draft && <button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/draft", { topicId: selectedTopic?.id, visualDirectionId: selectedDirection?.id })} disabled={busy || !selectedDirection || !characterLocked}>{busy && job.type === "draft" ? "Agent 正在生成初稿" : "生成文稿"}</button>}
+                {!workspace.draft && <button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/draft", { topicId: selectedTopic?.id, visualDirectionId: selectedDirection?.id })} disabled={busy || !selectedDirection || !characterLocked}>{busy && job.type === "draft" ? "Agent 正在生成初稿" : `生成文稿 · ${imageCount} 张配图`}</button>}
               </>
             )}
 
@@ -366,7 +425,7 @@ export function App() {
 
             {humanizedDraftReady && !assetsReady && workspace.humanization?.status === "completed" && <section className="humanize-result"><div className="subheading-row compact"><div><p className="eyebrow">去 AI 味记录</p><h3>已通过中文真人感质量检查</h3></div><StatusPill tone="live">单一 Skill</StatusPill></div><ul>{workspace.humanization.revisionNotes?.map((note) => <li key={note}>{note}</li>)}</ul></section>}
 
-            {humanizedDraftReady && !assetsReady && <button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/illustrate", {})} disabled={busy}>{busy && job.type === "illustrate" ? "Agent 正在生成逐页角色动作" : "生成配图与角色动作"}</button>}
+            {humanizedDraftReady && !assetsReady && <button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/illustrate", {})} disabled={busy}>{busy && job.type === "illustrate" ? "Agent 正在生成逐页角色动作" : `生成 ${imageCount} 张配图与角色动作`}</button>}
 
             {assetsReady && <section className="review-workspace">
               <div className="review-header"><div><p className="eyebrow">08 / 完整预览与审稿</p><h3>先看完整文稿和每张配图，再决定调整或发布</h3></div><StatusPill tone={reviewApproved ? "live" : "warning"}>{reviewApproved ? "预览已确认" : `待审 · 第 ${workspace.review?.round || 1} 版`}</StatusPill></div>
@@ -397,6 +456,7 @@ export function App() {
       </main>
 
       {(message || busy) && <div className={`task-toast ${job?.status === "failed" ? "task-toast--error" : ""}`} role="status"><strong>{busy ? `Agent 任务：${job.type} · ${job.progress?.percent || 0}%` : "工作台消息"}</strong><span>{busy ? job.progress?.label || "任务执行中" : message}</span>{busy && <><div className="task-progress"><i style={{ width: `${job.progress?.percent || 0}%` }} /></div><small>已运行 {formatElapsed(job.createdAt)}；服务每 5 秒记录心跳，超过阶段上限会明确停止并报错。</small></>}</div>}
+      {selectedSeriesAsset && <div className="modal-backdrop preview-backdrop" role="presentation" onMouseDown={() => setSeriesPreviewIndex(null)}><div className="image-preview-modal series-preview-modal" role="dialog" aria-modal="true" aria-labelledby="series-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="image-preview-top"><div><p className="eyebrow">品牌角色原图</p><h2 id="series-preview-title">{seriesPreviewIndex + 1} / {characterSeries.length} · {selectedSeriesAsset.action}</h2></div><button className="secondary-button" onClick={() => setSeriesPreviewIndex(null)}>关闭预览</button></div><div className="image-preview-canvas series-preview-canvas"><img src={selectedSeriesAsset.url} alt={`品牌角色动作原图：${selectedSeriesAsset.action}`} /></div><div className="review-nav"><button className="secondary-button" onClick={() => setSeriesPreviewIndex((index) => Math.max(0, index - 1))} disabled={seriesPreviewIndex === 0}>上一张</button><button className="secondary-button" onClick={() => setSeriesPreviewIndex((index) => Math.min(characterSeries.length - 1, index + 1))} disabled={seriesPreviewIndex === characterSeries.length - 1}>下一张</button></div></div></div>}
       {previewOpen && selectedAsset && <div className="modal-backdrop preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><div className="image-preview-modal" role="dialog" aria-modal="true" aria-labelledby="image-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="image-preview-top"><div><p className="eyebrow">配图原图</p><h2 id="image-preview-title">第 {selectedAssetIndex + 1} 张 · {selectedCard?.headline}</h2></div><button className="secondary-button" onClick={() => setPreviewOpen(false)}>关闭预览</button></div><div className="image-preview-canvas"><img src={selectedAsset.url} alt={`第 ${selectedAssetIndex + 1} 张小红书配图原图`} /></div></div></div>}
       {publishOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPublishOpen(false)}><div className="confirm-modal publish-choice-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">最后一道人工闸门</p><h2 id="publish-title">这篇内容接下来怎么处理？</h2><p>两种方式都会由本地 Codex Agent 使用当前浏览器登录会话完成。请选择本轮唯一动作。</p><div className="publish-mode-grid"><button className={publishMode === "publish_now" ? "publish-mode-card publish-mode-card--active" : "publish-mode-card"} onClick={() => setPublishMode("publish_now")} aria-pressed={publishMode === "publish_now"}><span className="publish-mode-choice" aria-hidden="true" /><strong>立即发布</strong><small>上传并点击“发布”；只有取得笔记 ID 或 URL 才算成功。</small></button><button className={publishMode === "save_draft" ? "publish-mode-card publish-mode-card--active" : "publish-mode-card"} onClick={() => setPublishMode("save_draft")} aria-pressed={publishMode === "save_draft"}><span className="publish-mode-choice" aria-hidden="true" /><strong>暂缓发布</strong><small>上传并填好稿件后，点击创作页底部的“暂存离开”；不会公开发布。</small></button></div><div className="modal-summary"><span>标题</span><strong>{workspace.draft.title}</strong><span>配图</span><strong>{workspace.assets.length} 张 PNG</strong><span>本轮动作</span><strong>{publishMode === "save_draft" ? "暂缓发布 · 暂存离开" : "立即公开发布"}</strong></div><div className="modal-actions"><button className="secondary-button" onClick={() => setPublishOpen(false)}>返回检查</button><button className="publish-button" onClick={() => { const mode = publishMode; setPublishOpen(false); startJob("/api/jobs/publish", { mode, confirmation: mode === "save_draft" ? "SAVE_DRAFT_CONFIRMED" : "PUBLISH_NOW_CONFIRMED" }); }}>{publishMode === "save_draft" ? "确认暂存离开" : "确认立即发布"}</button></div></div></div>}
     </div>

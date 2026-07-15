@@ -12,7 +12,7 @@
     "tags": { "type": "array", "minItems": 3, "maxItems": 10, "items": { "type": "string" } },
     "imageCards": {
       "type": "array",
-      "minItems": 3,
+      "minItems": 1,
       "maxItems": 6,
       "items": {
         "type": "object",

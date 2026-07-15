@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "prompt", "assetPath", "identityLock", "blocker"],
+  "required": ["status", "prompt", "assetPath", "identityLock", "brandVisualIdentity", "seriesAssets", "blocker"],
   "properties": {
     "status": { "type": "string", "enum": ["success", "blocked"] },
     "prompt": { "type": "string" },
@@ -16,9 +16,56 @@
         "faceAndHair": { "type": "string" },
         "outfit": { "type": "string" },
         "renderingStyle": { "type": "string" },
-        "invariants": { "type": "array", "minItems": 3, "items": { "type": "string" } }
+        "invariants": { "type": "array", "minItems": 5, "maxItems": 10, "items": { "type": "string" } }
+      }
+    },
+    "brandVisualIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "palette", "topicAccents", "typography", "composition", "characterPlacement", "visualRules"],
+      "properties": {
+        "name": { "type": "string" },
+        "palette": { "$ref": "#/$defs/palette" },
+        "topicAccents": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+        },
+        "typography": { "type": "string" },
+        "composition": { "type": "string" },
+        "characterPlacement": { "type": "string" },
+        "visualRules": { "type": "array", "minItems": 4, "maxItems": 8, "items": { "type": "string" } }
+      }
+    },
+    "seriesAssets": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "filePath"],
+        "properties": {
+          "action": { "type": "string" },
+          "filePath": { "type": "string" }
+        }
       }
     },
     "blocker": { "type": "string" }
+  },
+  "$defs": {
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paper", "ink", "primary", "accent", "soft"],
+      "properties": {
+        "paper": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "ink": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "primary": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "accent": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "soft": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+      }
+    }
   }
 }
