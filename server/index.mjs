@@ -5,12 +5,13 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import { AgentRunner, assertReaderFacingContent } from "./agent-runner.mjs";
+import { AgentRunner, assertReaderFacingContent, assertXhsTitle } from "./agent-runner.mjs";
 import { saveUploadedAvatar } from "./brand-character.mjs";
 import { createBrandCharacter, createBrandVisualIdentity, createDefaultState } from "./default-state.mjs";
 import { CARD_RENDERER_VERSION } from "./render-cards.mjs";
 import { applyDraftEdit, editTopic, emptyCopyVersions, emptyStoryline, resetProductionAfterBrandChange, resetProductionAfterTopic, selectTopic, setGenerationImageCount, storylineContext } from "./workspace-editor.mjs";
 import { isVerifiedViralSignal } from "./viral-filter.mjs";
+import { readImageDrafts } from "./xhs-draft-verifier.mjs";
 
 const execAsync = promisify(exec);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -257,6 +258,7 @@ app.put("/api/drafts/:version", async (request, response) => {
   try {
     const state = await stateStore.read();
     const edited = applyDraftEdit(state, version, request.body || {});
+    assertXhsTitle(edited.title, version === "raw" ? "手动编辑原始文稿" : "手动编辑去 AI 味文稿");
     const visualDirection = state.breakdown?.visualDirections?.find((item) => item.id === state.selectedVisualDirectionId);
     assertReaderFacingContent(edited, visualDirection, version === "raw" ? "手动编辑原始文稿" : "手动编辑去 AI 味文稿");
     await stateStore.write(state);
@@ -416,6 +418,7 @@ app.post("/api/jobs/publish", async (request, response) => {
     if (!state.draft || state.draft.mode !== "humanized" || state.assets.length === 0 || state.review?.status !== "approved" || state.assets.some((asset) => asset.rendererVersion !== CARD_RENDERER_VERSION)) {
       return response.status(400).json({ error: "请先完成文稿、去 AI 味、配图，并在审稿台确认预览" });
     }
+    assertXhsTitle(state.draft.title, "待发布文稿");
     const topic = state.research?.topics?.find((item) => item.id === state.selectedTopicId) || null;
     const visualDirection = state.breakdown?.visualDirections?.find((item) => item.id === state.selectedVisualDirectionId) || null;
     const storySnapshot = {
@@ -424,7 +427,20 @@ app.post("/api/jobs/publish", async (request, response) => {
       draft: { title: state.draft.title, body: state.draft.body, tags: state.draft.tags || [], imageCount: state.assets.length },
       visualDirection: visualDirection ? { id: visualDirection.id, name: visualDirection.name } : null,
     };
-    response.status(202).json(await runner.createJob("publish", { mode, confirmedAt: new Date().toISOString(), storySnapshot }));
+    let draftBaselineIds = [];
+    let draftBaselineCapturedAt = null;
+    if (mode === "save_draft") {
+      const drafts = await readImageDrafts({ root });
+      draftBaselineIds = drafts.map((draft) => draft.id);
+      draftBaselineCapturedAt = new Date().toISOString();
+    }
+    response.status(202).json(await runner.createJob("publish", {
+      mode,
+      confirmedAt: new Date().toISOString(),
+      storySnapshot,
+      draftBaselineIds,
+      draftBaselineCapturedAt,
+    }));
   } catch (error) {
     response.status(409).json({ error: error.message });
   }

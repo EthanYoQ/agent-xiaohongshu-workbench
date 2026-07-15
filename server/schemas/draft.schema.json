@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["title", "body", "tags", "imageCards", "editorNote"],
   "properties": {
-    "title": { "type": "string" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 20 },
     "body": { "type": "string" },
     "editorNote": { "type": "string" },
     "tags": { "type": "array", "minItems": 3, "maxItems": 10, "items": { "type": "string" } },

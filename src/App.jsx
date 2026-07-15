@@ -2,6 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 
 const TERMINAL_JOB_STATES = new Set(["completed", "failed"]);
 
+function publishStatusLabel(status) {
+  if (status === "draft_saved") return "已暂存到小红书草稿";
+  if (status === "published") return "已公开发布";
+  if (status === "failed") return "处理失败，可重试";
+  if (status === "unknown") return "平台结果未确认";
+  return "等待选择处理方式";
+}
+
 async function api(url, options) {
   const response = await fetch(url, { headers: { "Content-Type": "application/json", ...(options?.headers || {}) }, ...options });
   const data = await response.json();
@@ -110,7 +118,7 @@ function DraftVersionEditor({ version, label, draft, busy, onSave }) {
       <div className="copy-version-heading"><div><p className="eyebrow">{label}</p><h3>{draft.title}</h3></div><StatusPill tone={version === "humanized" ? "live" : "warning"}>{draft.editedBy === "user" ? "已手动修改" : version === "humanized" ? "真人感版本" : "Agent 初稿"}</StatusPill></div>
       {editing ? (
         <div className="copy-edit-form">
-          <label>标题<input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} maxLength={80} /></label>
+          <label>标题<input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} maxLength={20} /><small>{form.title.length}/20 · 小红书标题上限</small></label>
           <label>正文<textarea className="copy-body-input" value={form.body} onChange={(event) => setForm((current) => ({ ...current, body: event.target.value }))} maxLength={6000} /></label>
           <label>标签<input value={form.tags} onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))} placeholder="用逗号分隔" /></label>
           <div className="card-copy-editors">
@@ -169,8 +177,9 @@ export function App() {
         const next = await api(`/api/jobs/${job.id}`);
         setJob(next);
         if (TERMINAL_JOB_STATES.has(next.status)) {
-          await refreshWorkspace();
-          setMessage(next.status === "completed" ? "Agent 任务已完成，工作台已更新。" : next.error || "Agent 任务失败");
+          const updated = await refreshWorkspace();
+          const businessMessage = next.result?.message || updated.publish?.message;
+          setMessage(next.status === "completed" ? businessMessage || "Agent 任务已完成，工作台已更新。" : businessMessage || next.error || "Agent 任务失败");
         }
       } catch (error) { setMessage(error.message); }
     }, 1800);
@@ -450,12 +459,12 @@ export function App() {
               </div>
             </section>}
 
-            <section className="publish-panel"><div className="publish-copy"><div><p className="eyebrow">09 / 发布计划</p><h3>预览确认后，选择立即发布或暂缓发布</h3></div><p>立即发布需要笔记 ID/URL；暂缓发布会由 Agent 点击小红书创作页的“暂存离开”。</p></div><div className="publish-meta"><span>审稿状态</span><strong>{reviewApproved ? "文稿与配图已确认" : "等待完整预览确认"}</strong><span>当前结果</span><strong>{workspace.publish.status === "draft_saved" ? "已暂存到小红书草稿" : workspace.publish.status === "published" ? "已公开发布" : "等待选择处理方式"}</strong></div><button className="publish-button" disabled={busy || !hasPublishableDraft} onClick={() => setPublishOpen(true)}>{busy && job.type === "publish" ? job.payload?.mode === "save_draft" ? "Agent 正在暂存" : "Agent 正在发布" : workspace.publish.status === "draft_saved" ? "重新选择处理方式" : workspace.publish.status === "published" ? "已发布" : "选择处理方式"}</button>{!reviewApproved && <p className="publish-hint">完整查看文稿和配图：有意见就提交调整；没有意见则点击“预览无误，确认可发布”。</p>}</section>
+            <section className="publish-panel"><div className="publish-copy"><div><p className="eyebrow">09 / 发布计划</p><h3>预览确认后，选择立即发布或暂缓发布</h3></div><p>立即发布需要笔记 ID/URL；暂缓发布只有在草稿箱出现标题和配图数匹配的新记录后才算成功。</p></div><div className="publish-meta"><span>审稿状态</span><strong>{reviewApproved ? "文稿与配图已确认" : "等待完整预览确认"}</strong><span>当前结果</span><strong>{publishStatusLabel(workspace.publish.status)}</strong></div><button className="publish-button" disabled={busy || !hasPublishableDraft} onClick={() => setPublishOpen(true)}>{busy && job.type === "publish" ? job.payload?.mode === "save_draft" ? "Agent 正在暂存" : "Agent 正在发布" : workspace.publish.status === "draft_saved" ? "重新选择处理方式" : workspace.publish.status === "published" ? "已发布" : ["failed", "unknown"].includes(workspace.publish.status) ? "重试处理" : "选择处理方式"}</button>{workspace.publish?.message && ["failed", "unknown"].includes(workspace.publish.status) && <p className="publish-hint publish-hint--error">{workspace.publish.message}</p>}{!reviewApproved && <p className="publish-hint">完整查看文稿和配图：有意见就提交调整；没有意见则点击“预览无误，确认可发布”。</p>}</section>
           </div>
         </aside>
       </main>
 
-      {(message || busy) && <div className={`task-toast ${job?.status === "failed" ? "task-toast--error" : ""}`} role="status"><strong>{busy ? `Agent 任务：${job.type} · ${job.progress?.percent || 0}%` : "工作台消息"}</strong><span>{busy ? job.progress?.label || "任务执行中" : message}</span>{busy && <><div className="task-progress"><i style={{ width: `${job.progress?.percent || 0}%` }} /></div><small>已运行 {formatElapsed(job.createdAt)}；服务每 5 秒记录心跳，超过阶段上限会明确停止并报错。</small></>}</div>}
+      {(message || busy) && <div className={`task-toast ${job?.status === "failed" || ["failed", "unknown"].includes(job?.result?.status) ? "task-toast--error" : ""}`} role="status"><strong>{busy ? `Agent 任务：${job.type} · ${job.progress?.percent || 0}%` : "工作台消息"}</strong><span>{busy ? job.progress?.label || "任务执行中" : message}</span>{busy && <><div className="task-progress"><i style={{ width: `${job.progress?.percent || 0}%` }} /></div><small>已运行 {formatElapsed(job.createdAt)}；服务每 5 秒记录心跳，超过阶段上限会明确停止并报错。</small></>}</div>}
       {selectedSeriesAsset && <div className="modal-backdrop preview-backdrop" role="presentation" onMouseDown={() => setSeriesPreviewIndex(null)}><div className="image-preview-modal series-preview-modal" role="dialog" aria-modal="true" aria-labelledby="series-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="image-preview-top"><div><p className="eyebrow">品牌角色原图</p><h2 id="series-preview-title">{seriesPreviewIndex + 1} / {characterSeries.length} · {selectedSeriesAsset.action}</h2></div><button className="secondary-button" onClick={() => setSeriesPreviewIndex(null)}>关闭预览</button></div><div className="image-preview-canvas series-preview-canvas"><img src={selectedSeriesAsset.url} alt={`品牌角色动作原图：${selectedSeriesAsset.action}`} /></div><div className="review-nav"><button className="secondary-button" onClick={() => setSeriesPreviewIndex((index) => Math.max(0, index - 1))} disabled={seriesPreviewIndex === 0}>上一张</button><button className="secondary-button" onClick={() => setSeriesPreviewIndex((index) => Math.min(characterSeries.length - 1, index + 1))} disabled={seriesPreviewIndex === characterSeries.length - 1}>下一张</button></div></div></div>}
       {previewOpen && selectedAsset && <div className="modal-backdrop preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><div className="image-preview-modal" role="dialog" aria-modal="true" aria-labelledby="image-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="image-preview-top"><div><p className="eyebrow">配图原图</p><h2 id="image-preview-title">第 {selectedAssetIndex + 1} 张 · {selectedCard?.headline}</h2></div><button className="secondary-button" onClick={() => setPreviewOpen(false)}>关闭预览</button></div><div className="image-preview-canvas"><img src={selectedAsset.url} alt={`第 ${selectedAssetIndex + 1} 张小红书配图原图`} /></div></div></div>}
       {publishOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPublishOpen(false)}><div className="confirm-modal publish-choice-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">最后一道人工闸门</p><h2 id="publish-title">这篇内容接下来怎么处理？</h2><p>两种方式都会由本地 Codex Agent 使用当前浏览器登录会话完成。请选择本轮唯一动作。</p><div className="publish-mode-grid"><button className={publishMode === "publish_now" ? "publish-mode-card publish-mode-card--active" : "publish-mode-card"} onClick={() => setPublishMode("publish_now")} aria-pressed={publishMode === "publish_now"}><span className="publish-mode-choice" aria-hidden="true" /><strong>立即发布</strong><small>上传并点击“发布”；只有取得笔记 ID 或 URL 才算成功。</small></button><button className={publishMode === "save_draft" ? "publish-mode-card publish-mode-card--active" : "publish-mode-card"} onClick={() => setPublishMode("save_draft")} aria-pressed={publishMode === "save_draft"}><span className="publish-mode-choice" aria-hidden="true" /><strong>暂缓发布</strong><small>上传并填好稿件后，点击创作页底部的“暂存离开”；不会公开发布。</small></button></div><div className="modal-summary"><span>标题</span><strong>{workspace.draft.title}</strong><span>配图</span><strong>{workspace.assets.length} 张 PNG</strong><span>本轮动作</span><strong>{publishMode === "save_draft" ? "暂缓发布 · 暂存离开" : "立即公开发布"}</strong></div><div className="modal-actions"><button className="secondary-button" onClick={() => setPublishOpen(false)}>返回检查</button><button className="publish-button" onClick={() => { const mode = publishMode; setPublishOpen(false); startJob("/api/jobs/publish", { mode, confirmation: mode === "save_draft" ? "SAVE_DRAFT_CONFIRMED" : "PUBLISH_NOW_CONFIRMED" }); }}>{publishMode === "save_draft" ? "确认暂存离开" : "确认立即发布"}</button></div></div></div>}

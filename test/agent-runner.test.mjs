@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import sharp from "sharp";
-import { AgentRunner } from "../server/agent-runner.mjs";
+import { AgentRunner, assertXhsTitle } from "../server/agent-runner.mjs";
 import { saveUploadedAvatar } from "../server/brand-character.mjs";
 import { isVerifiedViralSignal } from "../server/viral-filter.mjs";
 
@@ -43,6 +43,11 @@ test("viral filter rejects one-like notes and accepts only verified threshold si
   assert.equal(isVerifiedViralSignal({ ...base, engagement: { ...base.engagement, collects: 100 } }), true);
   assert.equal(isVerifiedViralSignal({ ...base, engagement: { ...base.engagement, likes: 250, collects: 150 } }), true);
   assert.equal(isVerifiedViralSignal({ ...base, engagement: { ...base.engagement, likes: 999, verified: false } }), false);
+});
+
+test("XHS title gate uses the platform's 20 JavaScript character limit", () => {
+  assert.equal(assertXhsTitle("发布前先检查这三项", "测试"), "发布前先检查这三项");
+  assert.throws(() => assertXhsTitle("这个示例标题明显已经超过二十个字符限制需要拦截", "测试"), /超过小红书 20 字上限/);
 });
 
 test("research result rejects low-engagement evidence even when the agent marks it verified", async () => {
@@ -320,7 +325,7 @@ test("copy revision rerenders the preview and returns it to pending review", asy
   assert.notEqual(state.assets[0].id, "old-0");
 });
 
-test("save-draft publish mode requires the exact 暂存离开 action and never archives a story", async () => {
+test("save-draft publish mode uses the adapter, verifies a new draft, and never archives a story", async () => {
   let state = fixtureState();
   state.draft = {
     mode: "humanized",
@@ -331,15 +336,40 @@ test("save-draft publish mode requires the exact 暂存离开 action and never a
   };
   state.assets = [{ absolutePath: "C:\\workspace\\card-1.png" }];
   const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
-  const runner = new AgentRunner({ root: process.cwd(), stateStore });
-  const job = { id: "save-draft-test", type: "publish", payload: { mode: "save_draft" } };
+  const draftVerifier = async () => ({ ok: true, draft: { id: "draft-new", images: 1 }, evidence: "新增草稿已核验" });
+  const runner = new AgentRunner({ root: process.cwd(), stateStore, draftVerifier });
+  const job = { id: "save-draft-test", type: "publish", payload: { mode: "save_draft", draftBaselineIds: ["draft-old"], storySnapshot: { draft: { title: state.draft.title, imageCount: 1 } } } };
   const prompt = runner.buildPrompt(job, state);
-  assert.match(prompt, /点击界面中的“暂存离开”按钮/);
+  assert.match(prompt, /opencli xiaohongshu publish/);
+  assert.match(prompt, /不得使用 opencli browser upload/);
   assert.match(prompt, /严禁点击“发布”/);
   assert.match(prompt, /status=draft_saved/);
   assert.match(runner.operationalRules(job), /绝对不要点击“发布”/);
 
-  await runner.applyResult(job, { status: "draft_saved", noteId: null, url: null, message: "草稿已保存", evidence: "看到草稿保存成功反馈" });
+  const applied = await runner.applyResult(job, { status: "failed", noteId: null, url: null, message: "页面反馈不明确", evidence: "适配器已执行" });
+  assert.equal(applied.status, "draft_saved");
   assert.equal(state.publish.status, "draft_saved");
+  assert.equal(state.publish.verifiedDraftId, "draft-new");
+  assert.equal(state.storyline.entries.length, 0);
+});
+
+test("save-draft publish result is failed when no new matching draft is verified", async () => {
+  let state = fixtureState();
+  state.draft = { mode: "humanized", title: "未落入草稿箱", body: "正文", tags: [], imageCards: [] };
+  state.assets = [{ absolutePath: "C:\\workspace\\card-1.png" }];
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({
+    root: process.cwd(),
+    stateStore,
+    draftVerifier: async () => ({ ok: false, reason: "没有新增匹配记录" }),
+  });
+  const result = await runner.applyResult({
+    id: "save-draft-failed",
+    type: "publish",
+    payload: { mode: "save_draft", draftBaselineIds: [], storySnapshot: { draft: { title: state.draft.title, imageCount: 1 } } },
+  }, { status: "draft_saved", noteId: null, url: null, message: "错误的页面成功提示", evidence: "仅看到草稿箱入口" });
+  assert.equal(result.status, "failed");
+  assert.equal(state.publish.status, "failed");
+  assert.match(state.publish.message, /没有新增匹配记录/);
   assert.equal(state.storyline.entries.length, 0);
 });
