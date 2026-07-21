@@ -177,6 +177,41 @@ export function archivePublishedStoryline(state, job, result) {
   return entry;
 }
 
+export function archiveManuallyPublishedStoryline(state) {
+  if (!state.storyline) state.storyline = emptyStoryline();
+  const sourceOutputId = state.outputExportId || null;
+  const duplicate = sourceOutputId
+    ? state.storyline.entries.find((entry) => entry.sourceOutputId === sourceOutputId)
+    : null;
+  if (duplicate) return duplicate;
+  const topic = state.research?.topics?.find((item) => item.id === state.selectedTopicId) || null;
+  const direction = state.breakdown?.visualDirections?.find((item) => item.id === state.selectedVisualDirectionId) || null;
+  const draft = state.draft || null;
+  const publishedAt = new Date().toISOString();
+  const entry = {
+    id: `story-manual-${sourceOutputId || Date.now()}`,
+    sequence: state.storyline.entries.length + 1,
+    publishedAt,
+    noteId: null,
+    url: null,
+    positioningSnapshot: state.positioning,
+    topic: topic ? { id: topic.id, title: topic.title, angle: topic.angle, reason: topic.reason } : null,
+    draft: draft ? {
+      title: draft.title,
+      body: draft.body,
+      tags: draft.tags || [],
+      imageCount: draft.imageCount ?? state.assets?.length ?? 0,
+    } : null,
+    visualDirection: direction ? { id: direction.id, name: direction.name } : null,
+    publishEvidence: "用户在工作台中手动标记为已发布，仅用于梳理账号故事线",
+    source: "manual_published_mark",
+    sourceOutputId,
+  };
+  state.storyline.entries.push(entry);
+  state.storyline.updatedAt = publishedAt;
+  return entry;
+}
+
 export function mergeVerifiedStorylineEntries(state, job, result) {
   if (!state.storyline) state.storyline = emptyStoryline();
   const notes = Array.isArray(result?.notes) ? result.notes : [];

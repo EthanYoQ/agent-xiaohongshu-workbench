@@ -7,6 +7,7 @@ export function createBrandCharacter() {
     avatar: null,
     identityLock: null,
     series: [],
+    generationIssue: null,
     updatedAt: null,
   };
 }

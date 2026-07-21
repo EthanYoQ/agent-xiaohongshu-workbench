@@ -10,11 +10,11 @@
     "identityLock": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["character", "faceAndHair", "outfit", "renderingStyle", "invariants"],
+      "required": ["subject", "distinctiveFeatures", "canonicalForm", "renderingStyle", "invariants"],
       "properties": {
-        "character": { "type": "string" },
-        "faceAndHair": { "type": "string" },
-        "outfit": { "type": "string" },
+        "subject": { "type": "string", "description": "The reference subject in neutral terms. It may be a person, animal, mascot, object, plant, food, icon, or another visible subject." },
+        "distinctiveFeatures": { "type": "string", "description": "Only the traits visibly recognizable from the reference, such as face, fur, pattern, material, colors, accessories, or silhouette cues." },
+        "canonicalForm": { "type": "string", "description": "The repeatable brand form. If the reference is cropped or incomplete, label any new body, base, or supporting form as a brand extension rather than a source fact." },
         "renderingStyle": { "type": "string" },
         "invariants": { "type": "array", "minItems": 5, "maxItems": 10, "items": { "type": "string" } }
       }
@@ -48,7 +48,7 @@
         "required": ["action", "filePath"],
         "properties": {
           "action": { "type": "string" },
-          "filePath": { "type": "string" }
+          "filePath": { "type": "string", "minLength": 1 }
         }
       }
     },

@@ -5,6 +5,8 @@ const TERMINAL_JOB_STATES = new Set(["completed", "failed"]);
 function publishStatusLabel(status) {
   if (status === "draft_saved") return "已暂存到小红书草稿";
   if (status === "published") return "已公开发布";
+  if (status === "content_ready") return "内容已产出，发布默认关闭";
+  if (status === "manual_published") return "已手动标记已发布";
   if (status === "failed") return "处理失败，可重试";
   if (status === "unknown") return "平台结果未确认";
   return "等待选择处理方式";
@@ -153,6 +155,13 @@ export function App() {
   const [reviewInput, setReviewInput] = useState("");
   const [revisionScope, setRevisionScope] = useState("both");
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [accountCreateOpen, setAccountCreateOpen] = useState(false);
+  const [newAccountName, setNewAccountName] = useState("");
+  const [newAccountPositioning, setNewAccountPositioning] = useState("");
+  const [publishBindingOpen, setPublishBindingOpen] = useState(false);
+  const [publishAccountLabel, setPublishAccountLabel] = useState("");
+  const [publishRiskAcknowledged, setPublishRiskAcknowledged] = useState(false);
 
   const selectedTopic = useMemo(() => workspace?.research?.topics?.find((item) => item.id === workspace.selectedTopicId), [workspace]);
   const selectedDirection = useMemo(() => workspace?.breakdown?.visualDirections?.find((item) => item.id === workspace.selectedVisualDirectionId), [workspace]);
@@ -190,7 +199,7 @@ export function App() {
     setSelectedAssetIndex(0);
     setPreviewOpen(false);
     setReviewInput("");
-  }, [workspace?.assets?.[0]?.id]);
+  }, [workspace?.accountContext?.activeAccountId, workspace?.assets?.[0]?.id]);
 
   async function startJob(endpoint, payload) {
     setMessage("");
@@ -206,6 +215,65 @@ export function App() {
       const next = await api("/api/workspace", { method: "PUT", body: JSON.stringify({ positioning }) });
       setWorkspace(next);
       setMessage("账号定位已保存。");
+    } catch (error) { setMessage(error.message); }
+  }
+
+  async function switchAccount(accountId) {
+    if (accountId === workspace.accountContext?.activeAccountId) {
+      setAccountMenuOpen(false);
+      return;
+    }
+    try {
+      const next = await api("/api/accounts/active", { method: "PUT", body: JSON.stringify({ accountId }) });
+      setWorkspace(next);
+      setPositioning(next.positioning || "");
+      setAccountMenuOpen(false);
+      setPublishOpen(false);
+      setPreviewOpen(false);
+      setSeriesPreviewIndex(null);
+      setMessage(`已切换到内容账号：${next.accountContext?.activeAccountName || "当前账号"}`);
+    } catch (error) { setMessage(error.message); }
+  }
+
+  async function createAccount() {
+    try {
+      const next = await api("/api/accounts", { method: "POST", body: JSON.stringify({ name: newAccountName, positioning: newAccountPositioning }) });
+      setWorkspace(next);
+      setPositioning(next.positioning || "");
+      setAccountMenuOpen(false);
+      setAccountCreateOpen(false);
+      setNewAccountName("");
+      setNewAccountPositioning("");
+      setMessage("已新建空白内容账号。先根据定位生成专属品牌角色与视觉语言，再刷新本账号热点。");
+    } catch (error) { setMessage(error.message); }
+  }
+
+  async function savePublishBinding() {
+    try {
+      const next = await api("/api/publish-binding", {
+        method: "PUT",
+        body: JSON.stringify({ enabled: true, label: publishAccountLabel, confirmation: publishRiskAcknowledged ? "PUBLISH_RISK_ACKNOWLEDGED" : "" }),
+      });
+      setWorkspace(next);
+      setPublishBindingOpen(false);
+      setPublishRiskAcknowledged(false);
+      setMessage(`已选择发布账号：${next.accountContext?.publishBinding?.label}。工作台不会保存登录信息。`);
+    } catch (error) { setMessage(error.message); }
+  }
+
+  async function disablePublishBinding() {
+    try {
+      const next = await api("/api/publish-binding", { method: "PUT", body: JSON.stringify({ enabled: false }) });
+      setWorkspace(next);
+      setMessage("发布功能已关闭；后续内容只产出到本地 output，可手动标记故事线。");
+    } catch (error) { setMessage(error.message); }
+  }
+
+  async function markPublished() {
+    try {
+      const next = await api("/api/storyline/mark-published", { method: "POST", body: "{}" });
+      setWorkspace(next);
+      setMessage("已手动标记为已发布，仅写入当前内容账号的故事线。");
     } catch (error) { setMessage(error.message); }
   }
 
@@ -287,17 +355,23 @@ export function App() {
       const next = await api("/api/review/approve", { method: "POST", body: JSON.stringify({ confirmation: "REVIEW_APPROVED" }) });
       setWorkspace(next);
       setReviewInput("");
-      setMessage("文稿和配图已确认，可以进入发布。 ");
+      setMessage(next.accountContext?.publishBinding?.enabled ? "文稿和配图已确认，可以选择发布方式。" : "文稿和配图已确认，已保留在本地 output；发布功能仍默认关闭。");
     } catch (error) { setMessage(error.message); }
   }
 
   if (!workspace) return <main className="boot-screen">正在打开本地工作台…</main>;
 
+  const accountContext = workspace.accountContext || { accounts: [], publishBinding: { enabled: false }, output: { entries: [], latest: null }, researchOperator: null };
+  const contentAccounts = accountContext.accounts || [];
+  const publishBinding = accountContext.publishBinding || { enabled: false };
+  const outputArchive = accountContext.output || { entries: [], latest: null };
   const isDemo = workspace.research.mode === "demo";
   const characterHasAvatar = Boolean(workspace.brandCharacter?.avatar);
   const characterSeries = workspace.brandCharacter?.series || [];
   const characterReady = workspace.brandCharacter?.status === "ready" && characterHasAvatar && characterSeries.length === 6;
   const characterLocked = characterReady && workspace.brandCharacter.locked;
+  const characterGenerationIssue = workspace.brandCharacter?.generationIssue || null;
+  const identityLock = workspace.brandCharacter?.identityLock || null;
   const imageCount = Number(workspace.generationSettings?.imageCount || 4);
   const topicSignals = selectedTopic?.evidenceRefs?.map((index) => workspace.research.signals[index]).filter(Boolean) || [];
   const topicHasVerifiedGraphics = topicSignals.length > 0 && topicSignals.every((signal) => signal.mediaKind === "graphic" && signal.imageCount > 0 && signal.engagement?.verified === true);
@@ -309,56 +383,76 @@ export function App() {
   const storylineEntries = workspace.storyline?.entries || [];
   const assetsReady = humanizedDraftReady && workspace.assets.length > 0;
   const reviewApproved = assetsReady && workspace.review?.status === "approved";
-  const hasPublishableDraft = reviewApproved && workspace.publish.status !== "published";
+  const hasPublishableDraft = reviewApproved && publishBinding.enabled && !["published", "manual_published"].includes(workspace.publish.status);
+  const canMarkPublished = reviewApproved && workspace.publish.status !== "manual_published";
   const selectedAsset = workspace.assets[selectedAssetIndex] || workspace.assets[0];
   const selectedCard = workspace.draft?.imageCards?.[selectedAssetIndex];
   const selectedSeriesAsset = seriesPreviewIndex === null ? null : characterSeries[seriesPreviewIndex];
-  const progressStep = ["published", "draft_saved"].includes(workspace.publish.status) ? 9 : reviewApproved ? 9 : assetsReady ? 8 : humanizedDraftReady ? 7 : rawDraftReady ? 6 : breakdownReady ? 5 : characterLocked ? (selectedTopic ? 4 : workspace.research.topics.length ? 3 : 2) : 1;
+  const progressStep = ["published", "draft_saved", "content_ready", "manual_published"].includes(workspace.publish.status) ? 9 : reviewApproved ? 9 : assetsReady ? 8 : humanizedDraftReady ? 7 : rawDraftReady ? 6 : breakdownReady ? 5 : characterLocked ? (selectedTopic ? 4 : workspace.research.topics.length ? 3 : 2) : 1;
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand-block"><span className="brand-name">AGENT 小红书工作台</span><span className="brand-subtitle">单账号图文工作流</span></div>
+        <div className="header-account-zone">
+          <div className="brand-block"><span className="brand-name">AGENT 小红书工作台</span><span className="brand-subtitle">多账号图文工作流</span></div>
+          <div className="account-switcher">
+            <button className="account-switcher-trigger" onClick={() => setAccountMenuOpen((open) => !open)} disabled={busy} aria-expanded={accountMenuOpen} aria-controls="content-account-menu">
+              {workspace.brandCharacter?.avatar?.url && <img src={workspace.brandCharacter.avatar.url} alt="" />}
+              <span><small>内容账号</small><strong>{accountContext.activeAccountName || "当前内容账号"}</strong></span>
+              <em>切换</em>
+            </button>
+            {accountMenuOpen && <div className="account-switcher-menu" id="content-account-menu" role="menu">
+              <div className="account-menu-heading"><strong>内容账号</strong><span>热点、品牌与故事线独立保存</span></div>
+              <div className="account-menu-list">
+                {contentAccounts.map((account) => <button key={account.id} className={account.id === accountContext.activeAccountId ? "account-menu-item account-menu-item--active" : "account-menu-item"} onClick={() => switchAccount(account.id)} disabled={busy} role="menuitem"><div className={account.avatarUrl ? "account-menu-item-copy account-menu-item-copy--with-avatar" : "account-menu-item-copy"}>{account.avatarUrl && <img src={account.avatarUrl} alt="" />}<strong>{account.name}</strong><small>{account.positioning || "尚未填写定位"}</small></div><span>{account.id === accountContext.activeAccountId ? "当前" : account.researchUpdatedAt ? "已缓存热点" : "待刷新"}</span></button>)}
+              </div>
+              <button className="account-create-button" onClick={() => { setAccountMenuOpen(false); setAccountCreateOpen(true); }} disabled={busy}>新建内容账号</button>
+            </div>}
+          </div>
+        </div>
         <nav className="progress" aria-label="内容生产进度">
           {["账号定位", "品牌角色", "图文热点", "确认选题", "热点拆解", "生成文稿", "去 AI 味", "生成配图", "发布"].map((label, index) => (
             <div className={`progress-step ${index + 1 <= progressStep ? "progress-step--active" : ""}`} key={label}><span className="progress-number">{String(index + 1).padStart(2, "0")}</span><span>{label}</span></div>
           ))}
         </nav>
-        <div className="runtime-status"><span className={`runtime-dot ${toolStatus?.codex?.installed ? "runtime-dot--live" : ""}`} /><span>{toolStatus?.codex?.installed ? "Codex Agent 已就绪" : "正在检查本地 Agent"}</span><span className="runtime-divider" /><span>{toolStatus?.opencli?.installed ? "OpenCLI 已安装" : "OpenCLI 未连接"}</span></div>
+        <div className="runtime-status"><span className="operator-status"><span className={`runtime-dot ${accountContext.researchOperator?.status === "connected" ? "runtime-dot--live" : ""}`} /><span>采集执行账号：{accountContext.researchOperator?.status === "connected" ? "已连接（仅研究）" : "待连接"}</span></span><span className="runtime-divider" /><span>{toolStatus?.codex?.installed ? "Codex Agent 已就绪" : "正在检查本地 Agent"}</span><span className="runtime-divider" /><span>{toolStatus?.opencli?.installed ? "OpenCLI 已安装" : "OpenCLI 未连接"}</span></div>
       </header>
 
       <main className="workspace-grid">
         <section className="left-column">
-          <div className="section-heading"><div><p className="eyebrow">01 / 账号基础</p><h1>账号定位：为谁解决什么问题</h1></div><StatusPill tone={isDemo ? "warning" : "live"}>{isDemo ? "示例数据" : "Agent 证据"}</StatusPill></div>
+          <div className="section-heading"><div><p className="eyebrow">01 / 账号基础</p><h1>{accountContext.activeAccountName || "当前内容账号"}：为谁解决什么问题</h1></div><StatusPill tone={workspace.research.updatedAt ? "live" : "warning"}>{isDemo ? "示例数据" : workspace.research.updatedAt ? "热点缓存可用" : "等待刷新"}</StatusPill></div>
+          <div className="account-scope-bar"><div><span>采集执行账号</span><strong>{accountContext.researchOperator?.label || "当前浏览器小红书会话"}</strong><small>只负责按本账号定位检索；热点不会与其他内容账号共享。</small></div><div><span>发布账号</span><strong>{publishBinding.enabled ? publishBinding.label : "未绑定（默认关闭）"}</strong><small>{publishBinding.enabled ? "仅使用当前浏览器会话，不保存登录信息。" : "产出会停在预览与本地 output。"}</small></div></div>
           <div className="positioning-box">
             <label htmlFor="positioning">账号定位</label>
             <textarea id="positioning" value={positioning} onChange={(event) => setPositioning(event.target.value)} maxLength={500} />
-            <div className="field-actions"><span>{positioning.length}/500</span><button className="text-button" onClick={savePositioning} disabled={busy}>保存定位</button><button className="primary-small" onClick={() => startJob("/api/jobs/research", { positioning })} disabled={busy || !positioning.trim()}>{busy && job.type === "research" ? "Agent 正在筛选图文" : storylineEntries.length ? "结合故事线扫描新热点" : "让 Agent 扫描图文热点"}</button></div>
+            <div className="field-actions"><span>{positioning.length}/500</span><button className="text-button" onClick={savePositioning} disabled={busy}>保存定位</button><button className="primary-small" onClick={() => startJob("/api/jobs/research", { positioning })} disabled={busy || !positioning.trim()}>{busy && job.type === "research" ? "Agent 正在筛选图文" : workspace.research.updatedAt ? "刷新本账号热点" : "让 Agent 扫描本账号热点"}</button></div>
           </div>
 
           <section className="character-section">
             <div className="subheading-row">
-              <div><p className="eyebrow">02 / 品牌角色</p><h2>{characterLocked ? "角色、穿着与长期视觉已锁定" : "上传头像，固化系列品牌形象"}</h2></div>
-              <StatusPill tone={characterLocked ? "live" : "warning"}>{characterLocked ? "品牌母版生效" : characterReady ? "等待锁定" : characterHasAvatar ? "等待生成系列" : "尚未上传"}</StatusPill>
+              <div><p className="eyebrow">02 / 品牌主体</p><h2>{characterLocked ? "品牌主体与长期视觉已锁定" : characterHasAvatar ? "用本账号母版固化系列品牌形象" : positioning ? "根据本账号定位生成专属品牌形象" : "先填写账号定位，再设计专属品牌形象"}</h2></div>
+              <StatusPill tone={characterLocked ? "live" : "warning"}>{characterLocked ? "品牌母版生效" : characterReady ? "等待锁定" : characterGenerationIssue ? "上次未生成，可重试" : characterHasAvatar ? "等待生成系列" : positioning ? "可生成品牌" : "等待定位"}</StatusPill>
             </div>
             <div className="character-builder">
               <div className="avatar-column">
                 <div className="avatar-stage">
-                  {characterHasAvatar ? <img src={workspace.brandCharacter.avatar.url} alt="本地上传的账号头像角色" /> : <div className="avatar-empty"><strong>头像角色</strong><span>从本地选择人物母版图片</span></div>}
+                  {characterHasAvatar ? <img src={workspace.brandCharacter.avatar.url} alt="当前内容账号的品牌主体母版" /> : <div className="avatar-empty"><strong>本账号品牌主体</strong><span>可按账号定位生成，也可上传任意本地图片</span></div>}
                 </div>
                 <label className="secondary-button avatar-upload-button" htmlFor="brand-avatar-upload">{uploadBusy ? "正在上传" : characterHasAvatar ? "更换本地图片" : "上传本地图片"}</label>
                 <input id="brand-avatar-upload" className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={uploadBrandCharacter} disabled={busy || uploadBusy} />
                 <small>PNG / JPG / WebP，最大 10MB，宽高至少 256px</small>
               </div>
               <div className="character-controls">
-                <label>品牌母版</label>
-                <p className="brand-description">上传图片后，Agent 会提取人物身份、脸部与发型、穿着、比例和绘制方式，并生成 6 个只改变动作、手势与表情的系列形象。所有内容配图都会沿用这套母版。</p>
-                {workspace.brandCharacter?.identityLock && <div className="identity-summary"><p><strong>人物与发型：</strong>{workspace.brandCharacter.identityLock.faceAndHair}</p><p><strong>固定穿着：</strong>{workspace.brandCharacter.identityLock.outfit}</p><p><strong>绘制方式：</strong>{workspace.brandCharacter.identityLock.renderingStyle}</p></div>}
+                <label>品牌母版与视觉语言</label>
+                <p className="brand-description">新账号默认按定位设计品牌主体、配色与版式；也可上传任意本地图片（人物、动物、物体、植物或图形）。Agent 会锁定可见特征，并把裁切参考图扩展为一致的半身、贴纸或吉祥物系列；所有配图都沿用这套母版。</p>
+                {identityLock && <div className="identity-summary"><p><strong>品牌主体：</strong>{identityLock.subject || identityLock.character}</p><p><strong>可辨识特征：</strong>{identityLock.distinctiveFeatures || identityLock.faceAndHair}</p><p><strong>系列形态：</strong>{identityLock.canonicalForm || identityLock.outfit}</p><p><strong>绘制方式：</strong>{identityLock.renderingStyle}</p></div>}
                 {characterReady && <><div className="brand-theme"><div><strong>{workspace.brandVisualIdentity?.name}</strong><span>{workspace.brandVisualIdentity?.typography}</span></div><Palette palette={workspace.brandVisualIdentity?.palette} /></div><p className="brand-rule">{workspace.brandVisualIdentity?.composition}</p></>}
                 <div className="character-actions">
+                  {!characterHasAvatar && <button className="primary-small" onClick={() => startJob("/api/jobs/avatar", { mode: "generate_from_brief", brief: `账号定位：${positioning}` })} disabled={busy || uploadBusy || !positioning.trim()}>{busy && job.type === "avatar" ? "Agent 正在生成品牌" : "按账号定位生成品牌角色"}</button>}
                   {characterHasAvatar && !characterReady && <button className="primary-small" onClick={() => startJob("/api/jobs/avatar", { mode: "uploaded_reference" })} disabled={busy || uploadBusy}>{busy && job.type === "avatar" ? "Agent 正在生成系列" : "生成 6 个品牌系列形象"}</button>}
                   {characterReady && <button className={characterLocked ? "secondary-button" : "primary-small"} onClick={toggleCharacterLock} disabled={busy || uploadBusy}>{characterLocked ? "解除角色锁定" : "确认并锁定品牌母版"}</button>}
                 </div>
+                {characterGenerationIssue && <p className="character-generation-error">上次系列生成未完成：{characterGenerationIssue.message} 你可以直接重试；动物或裁切头像不需要重新换图。</p>}
                 {characterHasAvatar && <small>更换母版或解除锁定会使旧拆解、文稿和配图失效，但不会修改已发布故事线。</small>}
               </div>
             </div>
@@ -366,8 +460,9 @@ export function App() {
           </section>
 
           <section className="evidence-section">
-            <div className="subheading-row"><div><p className="eyebrow">03 / 图文信号</p><h2>只保留通过媒体与爆款门槛的图文笔记</h2></div><span className="timestamp">{formatTime(workspace.research.updatedAt)}</span></div>
+            <div className="subheading-row"><div><p className="eyebrow">03 / 本账号图文信号</p><h2>只保留通过媒体与爆款门槛的图文笔记</h2></div><span className="timestamp">{formatTime(workspace.research.updatedAt)}</span></div>
             <p className="research-summary">{workspace.research.summary}</p>
+            <p className="research-cache-note">{workspace.research.updatedAt ? `未点击“刷新本账号热点”时，会继续使用 ${formatTime(workspace.research.updatedAt)} 抓取的本账号垂类热点。` : "填写定位后刷新本账号热点；结果只会写入当前内容账号。"}</p>
             <div className="signal-list">
               {workspace.research.signals.map((signal, index) => (
                 <article className="signal-row" key={`${signal.label}-${index}`}>
@@ -387,10 +482,10 @@ export function App() {
           </section>
 
           <section className="storyline-section" data-testid="storyline-section">
-            <div className="subheading-row"><div><p className="eyebrow">长期内容资产</p><h2>账号故事线</h2></div><div className="storyline-header-actions"><span className="topic-count">已发布 {storylineEntries.length} 篇</span><button className="secondary-button" onClick={() => startJob("/api/jobs/storyline-sync", {})} disabled={busy}>{busy && job.type === "storyline_sync" ? "正在同步" : "同步已发布笔记"}</button></div></div>
-            <p className="storyline-sync-status">{workspace.storylineSync?.message || "尚未同步创作后台"}{workspace.storylineSync?.updatedAt ? ` · ${formatTime(workspace.storylineSync.updatedAt)}` : ""}</p>
+            <div className="subheading-row"><div><p className="eyebrow">长期内容资产</p><h2>账号故事线</h2></div><div className="storyline-header-actions"><span className="topic-count">已标记 {storylineEntries.length} 篇</span></div></div>
+            <p className="storyline-sync-status">多账号模式仅记录工作台中手动标记为“已发布”的内容，不读取当前浏览器账号的历史笔记，避免跨账号混入。</p>
             <div className="tone-anchor"><span>账号调性锚点</span><strong>{workspace.positioning}</strong><p>下一轮 Agent 会读取最近 12 篇已发布主题，兼顾故事线承接、相邻扩展与标题查重。</p></div>
-            {storylineEntries.length === 0 ? <div className="storyline-empty"><strong>尚未发现可核验的已发布笔记</strong><p>自动发布只有取得笔记 ID 或 URL 才入档；也可点击“同步已发布笔记”，从当前账号创作后台只读补录。</p></div> : <div className="storyline-list">{[...storylineEntries].reverse().map((entry) => <article className="storyline-entry" key={entry.id}><span className="story-sequence">{String(entry.sequence).padStart(2, "0")}</span><div><div className="storyline-entry-heading"><strong>{entry.topic?.title || entry.draft?.title}</strong><time>{formatTime(entry.publishedAt)}</time></div><p>{entry.topic?.angle}</p><small>{entry.topic?.reason}</small><div className="story-tags">{entry.draft?.tags?.slice(0, 5).map((tag) => <span key={tag}>#{tag}</span>)}</div>{entry.url && <a href={entry.url} target="_blank" rel="noreferrer">查看已发布笔记</a>}</div></article>)}</div>}
+            {storylineEntries.length === 0 ? <div className="storyline-empty"><strong>尚未记录已发布内容</strong><p>确认本轮预览后，可选择“手动标记已发布”。该动作只梳理故事线，不会调用小红书发布或读取平台记录。</p></div> : <div className="storyline-list">{[...storylineEntries].reverse().map((entry) => <article className="storyline-entry" key={entry.id}><span className="story-sequence">{String(entry.sequence).padStart(2, "0")}</span><div><div className="storyline-entry-heading"><strong>{entry.topic?.title || entry.draft?.title}</strong><time>{formatTime(entry.publishedAt)}</time></div><p>{entry.topic?.angle}</p><small>{entry.source === "manual_published_mark" ? "手动标记已发布 · 仅用于故事线" : entry.topic?.reason}</small><div className="story-tags">{entry.draft?.tags?.slice(0, 5).map((tag) => <span key={tag}>#{tag}</span>)}</div>{entry.url && <a href={entry.url} target="_blank" rel="noreferrer">查看已发布笔记</a>}</div></article>)}</div>}
           </section>
         </section>
 
@@ -455,11 +550,20 @@ export function App() {
               <div className="review-feedback">
                 <div className="review-feedback-heading"><div><p className="eyebrow">预览意见</p><h3>有意见就调整，没有意见就确认</h3></div>{workspace.review?.feedback && <span>上一轮：{workspace.review.feedback}</span>}</div>
                 <div className="review-input-row"><label>调整范围<select value={revisionScope} onChange={(event) => setRevisionScope(event.target.value)} disabled={busy}><option value="both">文稿与配图</option><option value="copy">仅文稿</option><option value="visual">仅配图</option></select></label><label className="review-comment">调整要求<textarea value={reviewInput} onChange={(event) => setReviewInput(event.target.value)} maxLength={1200} placeholder="例如：第 2 张文字再短一点；正文减少总结感；第 4 张角色动作换成下班后松一口气。" /></label></div>
-                <div className="review-actions"><span>{reviewInput.length}/1200 · 输入意见后执行调整；留空则确认当前版本</span><button className="secondary-button" onClick={() => startJob("/api/jobs/revise", { feedback: reviewInput, scope: revisionScope })} disabled={busy || !reviewInput.trim()}>{busy && job.type === "revise" ? "Agent 正在按意见调整" : "按意见调整"}</button><button className="publish-button" onClick={approveReview} disabled={busy || Boolean(reviewInput.trim()) || reviewApproved}>{reviewApproved ? "预览已确认" : "预览无误，确认可发布"}</button></div>
+                <div className="review-actions"><span>{reviewInput.length}/1200 · 输入意见后执行调整；留空则确认当前版本</span><button className="secondary-button" onClick={() => startJob("/api/jobs/revise", { feedback: reviewInput, scope: revisionScope })} disabled={busy || !reviewInput.trim()}>{busy && job.type === "revise" ? "Agent 正在按意见调整" : "按意见调整"}</button><button className="publish-button" onClick={approveReview} disabled={busy || Boolean(reviewInput.trim()) || reviewApproved}>{reviewApproved ? "预览已确认" : publishBinding.enabled ? "预览无误，确认可发布" : "预览无误，确认产出"}</button></div>
               </div>
             </section>}
 
-            <section className="publish-panel"><div className="publish-copy"><div><p className="eyebrow">09 / 发布计划</p><h3>预览确认后，选择立即发布或暂缓发布</h3></div><p>立即发布需要笔记 ID/URL；暂缓发布只有在草稿箱出现标题和配图数匹配的新记录后才算成功。</p></div><div className="publish-meta"><span>审稿状态</span><strong>{reviewApproved ? "文稿与配图已确认" : "等待完整预览确认"}</strong><span>当前结果</span><strong>{publishStatusLabel(workspace.publish.status)}</strong></div><button className="publish-button" disabled={busy || !hasPublishableDraft} onClick={() => setPublishOpen(true)}>{busy && job.type === "publish" ? job.payload?.mode === "save_draft" ? "Agent 正在暂存" : "Agent 正在发布" : workspace.publish.status === "draft_saved" ? "重新选择处理方式" : workspace.publish.status === "published" ? "已发布" : ["failed", "unknown"].includes(workspace.publish.status) ? "重试处理" : "选择处理方式"}</button>{workspace.publish?.message && ["failed", "unknown"].includes(workspace.publish.status) && <p className="publish-hint publish-hint--error">{workspace.publish.message}</p>}{!reviewApproved && <p className="publish-hint">完整查看文稿和配图：有意见就提交调整；没有意见则点击“预览无误，确认可发布”。</p>}</section>
+            <section className="publish-panel">
+              <div className="publish-copy"><div><p className="eyebrow">09 / 发布与归档</p><h3>{publishBinding.enabled ? "预览确认后，选择立即发布或暂缓发布" : "默认停在内容产出与人工确认"}</h3></div><p>{publishBinding.enabled ? "立即发布需要笔记 ID/URL；暂缓发布只有在草稿箱出现标题和配图数匹配的新记录后才算成功。" : "本账号没有启用发布；完成后会保留文稿和配图到本地 output，也可以仅手动标记故事线。"}</p></div>
+              <div className="publish-meta"><span>审稿状态</span><strong>{reviewApproved ? "文稿与配图已确认" : "等待完整预览确认"}</strong><span>发布账号</span><strong>{publishBinding.enabled ? publishBinding.label : "未绑定（默认关闭）"}</strong><span>本地输出</span><strong>{outputArchive.latest?.relativePath || "将在生成配图后创建"}</strong><span>当前结果</span><strong>{publishStatusLabel(workspace.publish.status)}</strong></div>
+              <div className="publish-actions">
+                {publishBinding.enabled ? <><button className="publish-button" disabled={busy || !hasPublishableDraft} onClick={() => setPublishOpen(true)}>{busy && job.type === "publish" ? job.payload?.mode === "save_draft" ? "Agent 正在暂存" : "Agent 正在发布" : workspace.publish.status === "draft_saved" ? "重新选择处理方式" : workspace.publish.status === "published" ? "已发布" : ["failed", "unknown"].includes(workspace.publish.status) ? "重试处理" : "选择处理方式"}</button><button className="text-button publish-binding-toggle" onClick={disablePublishBinding} disabled={busy}>关闭发布功能</button></> : <button className="publish-button" onClick={() => { setPublishAccountLabel(""); setPublishRiskAcknowledged(false); setPublishBindingOpen(true); }} disabled={busy}>选择发布账号</button>}
+                <button className="secondary-button manual-storyline-button" onClick={markPublished} disabled={busy || !canMarkPublished}>{workspace.publish.status === "manual_published" ? "已标记已发布" : "手动标记已发布"}</button>
+              </div>
+              {workspace.publish?.message && ["failed", "unknown"].includes(workspace.publish.status) && <p className="publish-hint publish-hint--error">{workspace.publish.message}</p>}
+              {!reviewApproved && <p className="publish-hint">完整查看文稿和配图：有意见就提交调整；留空确认后即可完成本地内容产出。</p>}
+            </section>
           </div>
         </aside>
       </main>
@@ -468,6 +572,8 @@ export function App() {
       {selectedSeriesAsset && <div className="modal-backdrop preview-backdrop" role="presentation" onMouseDown={() => setSeriesPreviewIndex(null)}><div className="image-preview-modal series-preview-modal" role="dialog" aria-modal="true" aria-labelledby="series-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="image-preview-top"><div><p className="eyebrow">品牌角色原图</p><h2 id="series-preview-title">{seriesPreviewIndex + 1} / {characterSeries.length} · {selectedSeriesAsset.action}</h2></div><button className="secondary-button" onClick={() => setSeriesPreviewIndex(null)}>关闭预览</button></div><div className="image-preview-canvas series-preview-canvas"><img src={selectedSeriesAsset.url} alt={`品牌角色动作原图：${selectedSeriesAsset.action}`} /></div><div className="review-nav"><button className="secondary-button" onClick={() => setSeriesPreviewIndex((index) => Math.max(0, index - 1))} disabled={seriesPreviewIndex === 0}>上一张</button><button className="secondary-button" onClick={() => setSeriesPreviewIndex((index) => Math.min(characterSeries.length - 1, index + 1))} disabled={seriesPreviewIndex === characterSeries.length - 1}>下一张</button></div></div></div>}
       {previewOpen && selectedAsset && <div className="modal-backdrop preview-backdrop" role="presentation" onMouseDown={() => setPreviewOpen(false)}><div className="image-preview-modal" role="dialog" aria-modal="true" aria-labelledby="image-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="image-preview-top"><div><p className="eyebrow">配图原图</p><h2 id="image-preview-title">第 {selectedAssetIndex + 1} 张 · {selectedCard?.headline}</h2></div><button className="secondary-button" onClick={() => setPreviewOpen(false)}>关闭预览</button></div><div className="image-preview-canvas"><img src={selectedAsset.url} alt={`第 ${selectedAssetIndex + 1} 张小红书配图原图`} /></div></div></div>}
       {publishOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPublishOpen(false)}><div className="confirm-modal publish-choice-modal" role="dialog" aria-modal="true" aria-labelledby="publish-title" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">最后一道人工闸门</p><h2 id="publish-title">这篇内容接下来怎么处理？</h2><p>两种方式都会由本地 Codex Agent 使用当前浏览器登录会话完成。请选择本轮唯一动作。</p><div className="publish-mode-grid"><button className={publishMode === "publish_now" ? "publish-mode-card publish-mode-card--active" : "publish-mode-card"} onClick={() => setPublishMode("publish_now")} aria-pressed={publishMode === "publish_now"}><span className="publish-mode-choice" aria-hidden="true" /><strong>立即发布</strong><small>上传并点击“发布”；只有取得笔记 ID 或 URL 才算成功。</small></button><button className={publishMode === "save_draft" ? "publish-mode-card publish-mode-card--active" : "publish-mode-card"} onClick={() => setPublishMode("save_draft")} aria-pressed={publishMode === "save_draft"}><span className="publish-mode-choice" aria-hidden="true" /><strong>暂缓发布</strong><small>上传并填好稿件后，点击创作页底部的“暂存离开”；不会公开发布。</small></button></div><div className="modal-summary"><span>标题</span><strong>{workspace.draft.title}</strong><span>配图</span><strong>{workspace.assets.length} 张 PNG</strong><span>本轮动作</span><strong>{publishMode === "save_draft" ? "暂缓发布 · 暂存离开" : "立即公开发布"}</strong></div><div className="modal-actions"><button className="secondary-button" onClick={() => setPublishOpen(false)}>返回检查</button><button className="publish-button" onClick={() => { const mode = publishMode; setPublishOpen(false); startJob("/api/jobs/publish", { mode, confirmation: mode === "save_draft" ? "SAVE_DRAFT_CONFIRMED" : "PUBLISH_NOW_CONFIRMED" }); }}>{publishMode === "save_draft" ? "确认暂存离开" : "确认立即发布"}</button></div></div></div>}
+      {accountCreateOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setAccountCreateOpen(false)}><div className="confirm-modal account-create-modal" role="dialog" aria-modal="true" aria-labelledby="account-create-title" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">新建内容账号</p><h2 id="account-create-title">从一套空白品牌与独立热点池开始</h2><p>新账号不会继承当前账号的热点、品牌角色、视觉语言、故事线或发布设置。填写定位后，Agent 会为它重新设计品牌。</p><div className="account-create-form"><label>账号名称<input value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)} maxLength={40} placeholder="例如：AI 职场观察" autoFocus /></label><label>账号定位（可稍后填写）<textarea value={newAccountPositioning} onChange={(event) => setNewAccountPositioning(event.target.value)} maxLength={500} placeholder="例如：高频使用 AI 的职场人，分享工具、方法与真实工作流" /></label></div><div className="modal-actions"><button className="secondary-button" onClick={() => setAccountCreateOpen(false)}>取消</button><button className="publish-button" onClick={createAccount} disabled={!newAccountName.trim()}>创建并切换</button></div></div></div>}
+      {publishBindingOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setPublishBindingOpen(false)}><div className="confirm-modal publish-binding-modal" role="dialog" aria-modal="true" aria-labelledby="publish-binding-title" onMouseDown={(event) => event.stopPropagation()}><p className="eyebrow">选择发布账号</p><h2 id="publish-binding-title">只绑定当前浏览器会话，不保存登录信息</h2><p>先在浏览器中手动登录你希望发布的目标小红书账号，再在这里填写一个识别名称。自动发布或暂存都有可能触发小红书风控，请谨慎使用。</p><div className="account-create-form"><label>当前浏览器中的发布账号名称<input value={publishAccountLabel} onChange={(event) => setPublishAccountLabel(event.target.value)} maxLength={40} placeholder="例如：AI 职场观察发布号" autoFocus /></label><label className="risk-confirmation"><input type="checkbox" checked={publishRiskAcknowledged} onChange={(event) => setPublishRiskAcknowledged(event.target.checked)} />我已确认：工作台不会保存 Cookie；自动发布或暂存可能触发小红书风控，我会自行确认当前浏览器账号。</label></div><div className="modal-actions"><button className="secondary-button" onClick={() => setPublishBindingOpen(false)}>取消</button><button className="publish-button" onClick={savePublishBinding} disabled={!publishAccountLabel.trim() || !publishRiskAcknowledged}>启用本账号发布</button></div></div></div>}
     </div>
   );
 }

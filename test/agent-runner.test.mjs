@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import sharp from "sharp";
-import { AgentRunner, assertXhsTitle } from "../server/agent-runner.mjs";
+import { AgentRunner, assertXhsTitle, progressFromOutput } from "../server/agent-runner.mjs";
+import { addContentAccount, createFreshMultiAccountState, getContentAccount } from "../server/account-workspace.mjs";
 import { saveUploadedAvatar } from "../server/brand-character.mjs";
 import { isVerifiedViralSignal } from "../server/viral-filter.mjs";
 
@@ -63,6 +64,31 @@ test("research result rejects low-engagement evidence even when the agent marks 
     topics: [],
   };
   await assert.rejects(runner.applyResult({ type: "research", payload: { positioning: state.positioning } }, low), /爆款门槛/);
+});
+
+test("research result writes only to the job's content account", async () => {
+  let state = createFreshMultiAccountState();
+  const first = getContentAccount(state);
+  first.workspace.research = { mode: "live_xhs", updatedAt: "2026-07-20T00:00:00Z", summary: "实习生热点", signals: [], topics: [{ id: "intern-topic", title: "实习生选题" }] };
+  const second = addContentAccount(state, { name: "AI 职场观察", positioning: "AI 职场" });
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({ root: process.cwd(), stateStore });
+  const result = {
+    status: "partial",
+    evidenceMode: "partial",
+    summary: "本账号只找到一条已核验图文爆款",
+    blocker: "继续刷新可补充更多证据",
+    signals: [{ label: "AI 职场爆款", heat: 88, evidence: "互动已核验", url: "https://example.invalid/ai", noteId: "ai-note", mediaKind: "graphic", imageCount: 3, publishedAt: null, engagement: { likes: 320, collects: 90, comments: 10, verified: true, observedAt: "2026-07-21T00:00:00Z", source: "note_detail" } }],
+    topics: [],
+  };
+
+  await runner.applyResult({ type: "research", payload: { accountId: second.id, accountName: second.name, positioning: "高频使用 AI 的职场人" } }, result);
+
+  const storedFirst = state.contentAccounts.find((account) => account.id === first.id);
+  const storedSecond = state.contentAccounts.find((account) => account.id === second.id);
+  assert.equal(storedFirst.workspace.research.topics[0].id, "intern-topic");
+  assert.equal(storedSecond.workspace.positioning, "高频使用 AI 的职场人");
+  assert.equal(storedSecond.workspace.research.signals[0].noteId, "ai-note");
 });
 
 test("storyline sync prompt is read-only and excludes comments and non-published records", () => {
@@ -208,7 +234,7 @@ test("humanize result becomes the only draft allowed to proceed to illustration"
   assert.equal(state.assets.length, 0);
 });
 
-test("avatar result locks identity metadata to a real project brand asset", async () => {
+test("avatar result accepts a non-human brand subject and locks it to real project brand assets", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "xhs-avatar-test-"));
   const avatarPath = path.join(root, "public", "brand", "avatars", "avatar.png");
   const seriesDir = path.join(root, "public", "brand", "actions", "series-test");
@@ -228,11 +254,11 @@ test("avatar result locks identity metadata to a real project brand asset", asyn
     prompt: "avatar prompt",
     assetPath: avatarPath,
     identityLock: {
-      character: "通用内容创作者",
-      faceAndHair: "圆脸，短发",
-      outfit: "浅色上衣与深色长裤",
+      subject: "橘色虎斑猫品牌主体",
+      distinctiveFeatures: "琥珀色眼睛、三角耳朵、橘白相间的条纹毛色",
+      canonicalForm: "品牌延展设定：统一的半身贴纸式小猫轮廓",
       renderingStyle: "清爽扁平插画",
-      invariants: ["脸部不变", "发型不变", "穿着不变", "比例不变", "渲染不变"],
+      invariants: ["猫脸轮廓不变", "耳朵形状不变", "条纹毛色不变", "琥珀色眼睛不变", "贴纸渲染不变"],
     },
     brandVisualIdentity: {
       name: "浅杏内容手账",
@@ -251,7 +277,105 @@ test("avatar result locks identity metadata to a real project brand asset", asyn
   assert.equal(state.brandCharacter.avatar.url, "/brand/avatars/avatar.png");
   assert.equal(state.brandCharacter.series.length, 6);
   assert.equal(state.brandCharacter.source, "user-upload");
+  assert.equal(state.brandCharacter.generationIssue, null);
   assert.equal(state.brandVisualIdentity.version, "agent-xhs-brand-v2");
+});
+
+test("uploaded animal or cropped reference is a supported avatar prompt, not a blocker", () => {
+  const runner = new AgentRunner({ root: process.cwd(), stateStore: { read: async () => fixtureState(), write: async () => {} } });
+  const prompt = runner.buildPrompt({ id: "animal-avatar", type: "avatar", payload: { mode: "uploaded_reference", sourcePath: "public/brand/avatars/animal.png", brief: "用户本地上传的品牌主体母版" } }, fixtureState());
+  assert.match(prompt, /人物、动物、吉祥物、物体、植物、食物、图标/);
+  assert.match(prompt, /不得因为看不到全身、衣服、手脚或比例而返回 blocked/);
+  assert.match(prompt, /不得把“参考图不是人物”或“画面被裁切”作为 blocker/);
+  assert.doesNotMatch(prompt, /完整主要穿着/);
+});
+
+test("avatar schema rejects empty series asset paths", async () => {
+  const schema = JSON.parse(await fs.readFile(path.join(process.cwd(), "server", "schemas", "avatar.schema.json"), "utf8"));
+  assert.equal(schema.properties.seriesAssets.items.properties.filePath.minLength, 1);
+});
+
+test("avatar progress does not mistake Skill text for completed image verification", () => {
+  const start = { phase: "avatar", label: "准备品牌角色生成", percent: 8 };
+  const fromSkillText = progressFromOutput("avatar", "完整阅读 imagegen Skill\ncodex", start);
+  assert.equal(fromSkillText.percent, 8);
+  const fromAssets = progressFromOutput("avatar", '{"filePath":"public/brand/actions/series/01.png"}', start);
+  assert.equal(fromAssets.phase, "verify");
+  assert.equal(fromAssets.percent, 88);
+});
+
+test("avatar failures persist a retryable issue on the matching content account", async () => {
+  let state = createFreshMultiAccountState();
+  const account = getContentAccount(state);
+  account.workspace.brandCharacter = {
+    status: "uploaded",
+    source: "user-upload",
+    locked: false,
+    avatar: { absolutePath: "public/brand/avatars/animal.png" },
+    identityLock: null,
+    series: [],
+    generationIssue: null,
+  };
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({ root: process.cwd(), stateStore });
+  await runner.recordAvatarFailure({ payload: { accountId: account.id, mode: "uploaded_reference" } }, "裁切头像也应当可以直接生成品牌延展系列");
+  const stored = getContentAccount(state).workspace.brandCharacter;
+  assert.equal(stored.status, "uploaded");
+  assert.match(stored.generationIssue.message, /裁切头像/);
+  assert.ok(stored.generationIssue.failedAt);
+});
+
+test("a stale avatar failure cannot roll back a later completed brand series", async () => {
+  let state = createFreshMultiAccountState();
+  const account = getContentAccount(state);
+  account.workspace.brandCharacter = {
+    status: "ready",
+    source: "user-upload",
+    locked: false,
+    avatar: { absolutePath: "public/brand/avatars/current.png" },
+    identityLock: { subject: "动物品牌主体" },
+    series: Array.from({ length: 6 }, (_, index) => ({ action: `动作 ${index + 1}` })),
+    generationIssue: null,
+  };
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({ root: process.cwd(), stateStore });
+  await runner.recordAvatarFailure({ payload: { accountId: account.id, mode: "uploaded_reference", sourcePath: "public/brand/avatars/old.png" } }, "旧任务失败");
+  const stored = getContentAccount(state).workspace.brandCharacter;
+  assert.equal(stored.status, "ready");
+  assert.equal(stored.series.length, 6);
+  assert.equal(stored.generationIssue, null);
+});
+
+test("runner startup marks interrupted avatar work as failed and retryable", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "xhs-avatar-recovery-test-"));
+  const jobsDir = path.join(root, ".data", "jobs");
+  await fs.mkdir(jobsDir, { recursive: true });
+  let state = createFreshMultiAccountState();
+  const account = getContentAccount(state);
+  account.workspace.brandCharacter = {
+    status: "uploaded",
+    source: "user-upload",
+    locked: false,
+    avatar: { absolutePath: "public/brand/avatars/animal.png" },
+    identityLock: null,
+    series: [],
+    generationIssue: null,
+  };
+  const interrupted = {
+    id: "avatar-interrupted",
+    type: "avatar",
+    status: "running",
+    payload: { accountId: account.id, mode: "uploaded_reference" },
+    progress: { phase: "series", label: "正在生成系列品牌形象", percent: 48 },
+  };
+  await fs.writeFile(path.join(jobsDir, `${interrupted.id}.json`), JSON.stringify(interrupted), "utf8");
+  const stateStore = { read: async () => structuredClone(state), write: async (next) => { state = structuredClone(next); } };
+  const runner = new AgentRunner({ root, stateStore });
+  await runner.initialize();
+  const recovered = await runner.getJob(interrupted.id);
+  assert.equal(recovered.status, "failed");
+  assert.match(recovered.error, /服务在任务完成前重启/);
+  assert.match(getContentAccount(state).workspace.brandCharacter.generationIssue.message, /服务在任务完成前重启/);
 });
 
 test("uploaded avatar is validated, normalized and kept inside the local brand directory", async () => {

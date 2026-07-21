@@ -8,9 +8,14 @@ public/brand/avatars/*
 !public/brand/avatars/.gitkeep
 public/brand/actions/*
 !public/brand/actions/.gitkeep
+output/*
+!output/.gitkeep
+tmp/
 .env
 .env.*
 !.env.example
 *.log
 npm-debug.log*
 packages/share-site/build/
+release/
+build/

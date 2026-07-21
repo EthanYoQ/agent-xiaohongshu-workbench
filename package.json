@@ -1,8 +1,9 @@
 {
   "name": "agent-xiaohongshu-workbench",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "由 Codex Agent 驱动的小红书图文内容工作台：热点研究、拆解、原创文稿、去 AI 味、品牌配图与人工确认发布。",
   "license": "MIT",
+  "author": "EthanYoQ",
   "private": false,
   "type": "module",
   "engines": {
@@ -15,21 +16,73 @@
     "dev": "node server/index.mjs",
     "build": "vite build",
     "start": "node server/index.mjs --production",
-    "test": "node --test test/agent-runner.test.mjs test/render-cards.test.mjs test/viral-filter.test.mjs test/workspace-editor.test.mjs test/xhs-draft-verifier.test.mjs",
+    "test": "node --test test/account-workspace.test.mjs test/agent-runner.test.mjs test/output-archive.test.mjs test/render-cards.test.mjs test/viral-filter.test.mjs test/workspace-editor.test.mjs test/xhs-draft-verifier.test.mjs",
     "test:share": "npm --workspace @agent-xiaohongshu/share-site test",
     "test:all": "npm run test && npm run test:share",
     "build:share": "npm --workspace @agent-xiaohongshu/share-site run build",
     "setup": "node scripts/verify-runtime.mjs",
-    "verify:runtime": "node scripts/verify-runtime.mjs"
+    "verify:runtime": "node scripts/verify-runtime.mjs",
+    "make:desktop-icon": "node scripts/make-desktop-icon.mjs",
+    "package:win": "npm run build && npm run make:desktop-icon && electron-builder --win nsis --publish never"
   },
   "dependencies": {
     "@jackwener/opencli": "1.8.6",
     "@vitejs/plugin-react": "5.0.4",
     "express": "5.1.0",
-    "sharp": "0.34.4",
-    "vite": "6.4.2",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "sharp": "0.34.4",
+    "vite": "6.4.2"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^3.0.1"
+  },
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "com.ethanyoq.agentxiaohongshuworkbench",
+    "productName": "Agent 小红书工作台",
+    "asar": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "server/**/*",
+      "desktop/**/*",
+      ".agents/**/*",
+      "scripts/**/*",
+      "public/project-logo.png",
+      "package.json",
+      "!**/.data{,/**}",
+      "!**/output{,/**}",
+      "!**/tmp{,/**}",
+      "!public/generated{,/**}",
+      "!public/brand{,/**}",
+      "!test{,/**}",
+      "!docs{,/**}",
+      "!packages{,/**}"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Agent-XHS-Workbench-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Agent 小红书工作台"
+    }
+  }
 }
