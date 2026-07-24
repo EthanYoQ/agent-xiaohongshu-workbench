@@ -2,7 +2,11 @@
   <img src="./public/project-logo.png" alt="Agent 小红书工作台：从热点到发布的 Agent 工作流" width="100%" />
 </p>
 
-# Agent 小红书工作台
+<h1 align="center">小红书工作台</h1>
+
+</p>
+<h2 align="center">如果有帮到你，麻烦动动小手点亮STAR ✨✨</h2>
+</p>
 
 > 一个依托 **Codex CLI** 运行的本地小红书图文内容工作台：从热点研究、笔记拆解、原创文稿和去 AI 味，到品牌配图、完整预览与人工确认发布。
 
