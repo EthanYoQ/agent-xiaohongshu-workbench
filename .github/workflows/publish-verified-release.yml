@@ -1,0 +1,78 @@
+name: Publish verified desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag to publish
+        required: true
+        type: string
+      target_commit:
+        description: Commit used by both verified platform builds
+        required: true
+        type: string
+      macos_run_id:
+        description: Successful macOS ARM64 workflow run ID
+        required: true
+        type: string
+      windows_run_id:
+        description: Successful Windows x64 workflow run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  promote:
+    name: Promote verified installers to GitHub Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Download verified workflow artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/macos artifacts/windows
+          gh run download "${{ inputs.macos_run_id }}" --repo "$GITHUB_REPOSITORY" --name macos-arm64-unsigned-qualification --dir artifacts/macos
+          gh run download "${{ inputs.windows_run_id }}" --repo "$GITHUB_REPOSITORY" --name windows-x64-unsigned-build-verification --dir artifacts/windows
+
+      - name: Verify artifact contract and checksums
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          win_installer="$(find artifacts/windows -type f -name 'Agent-XHS-Workbench-Setup-*-x64.exe' -print -quit)"
+          mac_dmg="$(find artifacts/macos -type f -name 'Agent-XHS-Workbench-*-arm64.dmg' -print -quit)"
+          mac_zip="$(find artifacts/macos -type f -name 'Agent-XHS-Workbench-*-arm64.zip' -print -quit)"
+          manifest="$(find artifacts/windows -type f -name manifest.json -print -quit)"
+          windows_checksums="$(find artifacts/windows -type f -name SHA256SUMS.txt -print -quit)"
+          test -n "$win_installer"
+          test -n "$mac_dmg"
+          test -n "$mac_zip"
+          test -n "$manifest"
+          test -n "$windows_checksums"
+          test "$(jq -r '.smokeTest' "$manifest")" = "passed"
+          test "$(jq -r '.installerInstallUninstall | startswith("passed")' "$manifest")" = "true"
+          sha256sum --check "$windows_checksums"
+          sha256sum "$win_installer" "$mac_dmg" "$mac_zip" > SHA256SUMS.txt
+          printf 'win_installer=%s\n' "$win_installer" >> "$GITHUB_OUTPUT"
+          printf 'mac_dmg=%s\n' "$mac_dmg" >> "$GITHUB_OUTPUT"
+          printf 'mac_zip=%s\n' "$mac_zip" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the verified draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_target="$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+          test "$current_target" = "${{ inputs.target_commit }}"
+          gh release upload "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --clobber \
+            "${{ steps.verify.outputs.win_installer }}" \
+            "${{ steps.verify.outputs.mac_dmg }}" \
+            "${{ steps.verify.outputs.mac_zip }}" \
+            SHA256SUMS.txt
+          gh release edit "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --draft=false --latest
