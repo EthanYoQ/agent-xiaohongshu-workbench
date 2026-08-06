@@ -34,14 +34,15 @@ jobs:
           $installerPath = "release/Agent-XHS-Workbench-Setup-$version-x64.exe"
           $contract = [ordered]@{
             schemaVersion = 1
-            purpose = "Build and verify an unsigned Windows x64 NSIS installer"
-            stage = "build-verification"
-            releaseCreated = $false
+            purpose = "Build, verify and release an unsigned Windows x64 NSIS installer"
+            stage = "release-candidate-verification"
+            release = [ordered]@{ tag = "v$version"; name = "Agent 小红书工作台 v$version"; targetCommit = $env:GITHUB_SHA }
             source = [ordered]@{ ref = $env:GITHUB_REF; commit = $env:GITHUB_SHA; runner = "windows-2022"; node = "22" }
             artifactSet = @([ordered]@{ path = $installerPath; architecture = "x64"; installer = "NSIS" })
             acceptanceScope = [ordered]@{
               packagedRuntimeSmoke = "required"
-              installerInstallUninstallUpgrade = "not evaluated by this workflow"
+              installerInstallAndUninstall = "required"
+              upgrade = "not evaluated; no prior-version installer is installed in this job"
               codeSigning = "unsigned; status recorded as evidence"
             }
           }
@@ -91,6 +92,35 @@ jobs:
             throw "Packaged smoke test did not report success"
           }
 
+          $installRoot = Join-Path $env:RUNNER_TEMP "agent-xhs-installer-smoke"
+          if (Test-Path -LiteralPath $installRoot) {
+            Remove-Item -LiteralPath $installRoot -Recurse -Force
+          }
+          & $installer "/S" "/D=$installRoot"
+          if ($LASTEXITCODE -ne 0) {
+            throw "NSIS silent install failed with exit code $LASTEXITCODE"
+          }
+          $installedApp = @(Get-ChildItem -LiteralPath $installRoot -Filter "*.exe" -File | Where-Object { $_.Name -notlike "Uninstall*" })
+          if ($installedApp.Count -ne 1) {
+            throw "Expected exactly one installed application executable; found $($installedApp.Count)"
+          }
+          $installedSmokeLog = Join-Path $env:WINDOWS_EVIDENCE_ROOT "installed-smoke-test.txt"
+          & $installedApp[0].FullName "--smoke-test" *>&1 | Tee-Object -FilePath $installedSmokeLog
+          if ($LASTEXITCODE -ne 0 -or -not (Select-String -LiteralPath $installedSmokeLog -Pattern "AGENT_XHS_DESKTOP_SMOKE_OK" -Quiet)) {
+            throw "Installed application smoke test failed"
+          }
+          $uninstaller = @(Get-ChildItem -LiteralPath $installRoot -Filter "Uninstall*.exe" -File)
+          if ($uninstaller.Count -ne 1) {
+            throw "Expected exactly one uninstaller; found $($uninstaller.Count)"
+          }
+          & $uninstaller[0].FullName "/S"
+          if ($LASTEXITCODE -ne 0) {
+            throw "NSIS silent uninstall failed with exit code $LASTEXITCODE"
+          }
+          if (Test-Path -LiteralPath $installRoot) {
+            throw "NSIS uninstall left the installation directory behind: $installRoot"
+          }
+
           $signature = Get-AuthenticodeSignature -LiteralPath $installer
           $signing = [ordered]@{
             status = [string]$signature.Status
@@ -106,6 +136,7 @@ jobs:
             installer = [ordered]@{ path = $env:WINDOWS_INSTALLER_PATH; sha256 = $hash.Hash; sizeBytes = (Get-Item -LiteralPath $installer).Length }
             packagedExecutable = $app[0].Name
             smokeTest = "passed"
+            installerInstallUninstall = "passed"
             signingEvidence = "signing.json"
           }
           $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $env:WINDOWS_EVIDENCE_ROOT "manifest.json") -Encoding utf8

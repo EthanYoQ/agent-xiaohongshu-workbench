@@ -1,6 +1,6 @@
 {
   "name": "agent-xiaohongshu-workbench",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "由 Codex Agent 驱动的小红书图文内容工作台：热点研究、拆解、原创文稿、去 AI 味、品牌配图与人工确认发布。",
   "license": "MIT",
   "author": "EthanYoQ",
