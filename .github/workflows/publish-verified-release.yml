@@ -50,18 +50,15 @@ jobs:
           mac_dmg="$(find artifacts/macos -type f -name 'Agent-XHS-Workbench-*-arm64.dmg' -print -quit)"
           mac_zip="$(find artifacts/macos -type f -name 'Agent-XHS-Workbench-*-arm64.zip' -print -quit)"
           manifest="$(find artifacts/windows -type f -name manifest.json -print -quit)"
-          windows_checksums="$(find artifacts/windows -type f -name SHA256SUMS.txt -print -quit)"
           test -n "$win_installer"
           test -n "$mac_dmg"
           test -n "$mac_zip"
           test -n "$manifest"
-          test -n "$windows_checksums"
           test "$(jq -r '.smokeTest' "$manifest")" = "passed"
           test "$(jq -r '.installerInstallUninstall | startswith("passed")' "$manifest")" = "true"
-          (
-            cd "$(dirname "$windows_checksums")"
-            sha256sum --check "$(basename "$windows_checksums")"
-          )
+          expected_windows_sha="$(jq -r '.installer.sha256' "$manifest" | tr '[:lower:]' '[:upper:]')"
+          actual_windows_sha="$(sha256sum "$win_installer" | awk '{print toupper($1)}')"
+          test "$actual_windows_sha" = "$expected_windows_sha"
           sha256sum "$win_installer" "$mac_dmg" "$mac_zip" > SHA256SUMS.txt
           printf 'win_installer=%s\n' "$win_installer" >> "$GITHUB_OUTPUT"
           printf 'mac_dmg=%s\n' "$mac_dmg" >> "$GITHUB_OUTPUT"
