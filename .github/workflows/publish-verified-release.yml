@@ -58,7 +58,10 @@ jobs:
           test -n "$windows_checksums"
           test "$(jq -r '.smokeTest' "$manifest")" = "passed"
           test "$(jq -r '.installerInstallUninstall | startswith("passed")' "$manifest")" = "true"
-          sha256sum --check "$windows_checksums"
+          (
+            cd "$(dirname "$windows_checksums")"
+            sha256sum --check "$(basename "$windows_checksums")"
+          )
           sha256sum "$win_installer" "$mac_dmg" "$mac_zip" > SHA256SUMS.txt
           printf 'win_installer=%s\n' "$win_installer" >> "$GITHUB_OUTPUT"
           printf 'mac_dmg=%s\n' "$mac_dmg" >> "$GITHUB_OUTPUT"
