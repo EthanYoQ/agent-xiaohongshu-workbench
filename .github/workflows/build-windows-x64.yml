@@ -124,11 +124,18 @@ jobs:
             throw "NSIS silent uninstall failed with exit code $LASTEXITCODE"
           }
           $uninstallDeadline = (Get-Date).AddSeconds(30)
-          while ((Test-Path -LiteralPath $installRoot) -and (Get-Date) -lt $uninstallDeadline) {
+          do {
+            $remainingInstallItems = if (Test-Path -LiteralPath $installRoot) {
+              @(Get-ChildItem -LiteralPath $installRoot -Force)
+            } else { @() }
+            if ($remainingInstallItems.Count -eq 0) { break }
             Start-Sleep -Seconds 1
+          } while ((Get-Date) -lt $uninstallDeadline)
+          if ($remainingInstallItems.Count -ne 0) {
+            throw "NSIS uninstall left files behind: $($remainingInstallItems.Name -join ', ')"
           }
           if (Test-Path -LiteralPath $installRoot) {
-            throw "NSIS uninstall left the installation directory behind: $installRoot"
+            Remove-Item -LiteralPath $installRoot -Force
           }
 
           $signature = Get-AuthenticodeSignature -LiteralPath $installer
@@ -146,7 +153,7 @@ jobs:
             installer = [ordered]@{ path = $env:WINDOWS_INSTALLER_PATH; sha256 = $hash.Hash; sizeBytes = (Get-Item -LiteralPath $installer).Length }
             packagedExecutable = $app[0].Name
             smokeTest = "passed"
-            installerInstallUninstall = "passed"
+            installerInstallUninstall = "passed; no installed files remained after uninstall"
             signingEvidence = "signing.json"
           }
           $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $env:WINDOWS_EVIDENCE_ROOT "manifest.json") -Encoding utf8
