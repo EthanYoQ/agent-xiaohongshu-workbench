@@ -100,22 +100,32 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "NSIS silent install failed with exit code $LASTEXITCODE"
           }
-          $installedApp = @(Get-ChildItem -LiteralPath $installRoot -Filter "*.exe" -File | Where-Object { $_.Name -notlike "Uninstall*" })
-          if ($installedApp.Count -ne 1) {
-            throw "Expected exactly one installed application executable; found $($installedApp.Count)"
+          $installDeadline = (Get-Date).AddSeconds(30)
+          do {
+            $installedApp = if (Test-Path -LiteralPath $installRoot) {
+              @(Get-ChildItem -LiteralPath $installRoot -Filter "*.exe" -File | Where-Object { $_.Name -notlike "Uninstall*" })
+            } else { @() }
+            $uninstaller = if (Test-Path -LiteralPath $installRoot) {
+              @(Get-ChildItem -LiteralPath $installRoot -Filter "Uninstall*.exe" -File)
+            } else { @() }
+            if ($installedApp.Count -eq 1 -and $uninstaller.Count -eq 1) { break }
+            Start-Sleep -Seconds 1
+          } while ((Get-Date) -lt $installDeadline)
+          if ($installedApp.Count -ne 1 -or $uninstaller.Count -ne 1) {
+            throw "NSIS silent install did not complete within 30 seconds"
           }
           $installedSmokeLog = Join-Path $env:WINDOWS_EVIDENCE_ROOT "installed-smoke-test.txt"
           & $installedApp[0].FullName "--smoke-test" *>&1 | Tee-Object -FilePath $installedSmokeLog
           if ($LASTEXITCODE -ne 0 -or -not (Select-String -LiteralPath $installedSmokeLog -Pattern "AGENT_XHS_DESKTOP_SMOKE_OK" -Quiet)) {
             throw "Installed application smoke test failed"
           }
-          $uninstaller = @(Get-ChildItem -LiteralPath $installRoot -Filter "Uninstall*.exe" -File)
-          if ($uninstaller.Count -ne 1) {
-            throw "Expected exactly one uninstaller; found $($uninstaller.Count)"
-          }
-          & $uninstaller[0].FullName "/S"
+          & $uninstaller[0].FullName "/currentuser" "/S"
           if ($LASTEXITCODE -ne 0) {
             throw "NSIS silent uninstall failed with exit code $LASTEXITCODE"
+          }
+          $uninstallDeadline = (Get-Date).AddSeconds(30)
+          while ((Test-Path -LiteralPath $installRoot) -and (Get-Date) -lt $uninstallDeadline) {
+            Start-Sleep -Seconds 1
           }
           if (Test-Path -LiteralPath $installRoot) {
             throw "NSIS uninstall left the installation directory behind: $installRoot"
