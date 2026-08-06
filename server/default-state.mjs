@@ -47,6 +47,7 @@ export function createDefaultState() {
       topics: [],
     },
     selectedTopicId: null,
+    topicChange: null,
     breakdown: null,
     selectedVisualDirectionId: null,
     brandCharacter: createBrandCharacter(),

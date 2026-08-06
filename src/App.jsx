@@ -152,6 +152,8 @@ export function App() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [selectedAssetIndex, setSelectedAssetIndex] = useState(0);
   const [seriesPreviewIndex, setSeriesPreviewIndex] = useState(null);
+  const [brandSeriesMode, setBrandSeriesMode] = useState("default");
+  const [customBrandSeriesPrompt, setCustomBrandSeriesPrompt] = useState("");
   const [reviewInput, setReviewInput] = useState("");
   const [revisionScope, setRevisionScope] = useState("both");
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -201,6 +203,11 @@ export function App() {
     setReviewInput("");
   }, [workspace?.accountContext?.activeAccountId, workspace?.assets?.[0]?.id]);
 
+  useEffect(() => {
+    setBrandSeriesMode("default");
+    setCustomBrandSeriesPrompt("");
+  }, [workspace?.accountContext?.activeAccountId]);
+
   async function startJob(endpoint, payload) {
     setMessage("");
     try {
@@ -231,6 +238,8 @@ export function App() {
       setPublishOpen(false);
       setPreviewOpen(false);
       setSeriesPreviewIndex(null);
+      setBrandSeriesMode("default");
+      setCustomBrandSeriesPrompt("");
       setMessage(`已切换到内容账号：${next.accountContext?.activeAccountName || "当前账号"}`);
     } catch (error) { setMessage(error.message); }
   }
@@ -244,6 +253,8 @@ export function App() {
       setAccountCreateOpen(false);
       setNewAccountName("");
       setNewAccountPositioning("");
+      setBrandSeriesMode("default");
+      setCustomBrandSeriesPrompt("");
       setMessage("已新建空白内容账号。先根据定位生成专属品牌角色与视觉语言，再刷新本账号热点。");
     } catch (error) { setMessage(error.message); }
   }
@@ -312,6 +323,17 @@ export function App() {
     } catch (error) { setMessage(error.message); }
   }
 
+  function startBrandSeriesGeneration() {
+    const mode = characterHasAvatar ? "uploaded_reference" : "generate_from_brief";
+    const payload = {
+      mode,
+      seriesStyle: brandSeriesMode,
+      customPrompt: brandSeriesMode === "custom" ? customBrandSeriesPrompt : "",
+    };
+    if (mode === "generate_from_brief") payload.brief = `账号定位：${positioning}`;
+    startJob("/api/jobs/avatar", payload);
+  }
+
   async function chooseImageCount(imageCount) {
     if (imageCount === workspace.generationSettings?.imageCount) return;
     if (workspace.draft && !window.confirm("修改配图数量会清空当前文稿、配图和审稿结果，是否继续？")) return;
@@ -327,9 +349,17 @@ export function App() {
     try {
       const next = await api(`/api/topics/${topicId}/select`, { method: "PUT", body: "{}" });
       setWorkspace(next);
-      setMessage("已切换选题，后续会从新选题重新拆解。");
+      setMessage(next.topicChange ? "已切换选题，旧内容仍保留。请决定是否按新选题重新生成。" : "已切换选题，后续会从新选题重新拆解。");
       return true;
     } catch (error) { setMessage(error.message); return false; }
+  }
+
+  async function resolveTopicChange(action) {
+    try {
+      const next = await api("/api/topic-change", { method: "PUT", body: JSON.stringify({ action }) });
+      setWorkspace(next);
+      setMessage(action === "regenerate" ? "已清空上一选题产物，请从热点拆解开始生成当前选题。" : "已保留上一选题内容用于查看；它不会作为当前选题继续处理或发布。");
+    } catch (error) { setMessage(error.message); }
   }
 
   async function saveTopic(topicId, value) {
@@ -382,9 +412,10 @@ export function App() {
   const humanizedDraft = workspace.copyVersions?.humanized || (humanizedDraftReady ? workspace.draft : null);
   const storylineEntries = workspace.storyline?.entries || [];
   const assetsReady = humanizedDraftReady && workspace.assets.length > 0;
+  const topicChange = workspace.topicChange || null;
   const reviewApproved = assetsReady && workspace.review?.status === "approved";
-  const hasPublishableDraft = reviewApproved && publishBinding.enabled && !["published", "manual_published"].includes(workspace.publish.status);
-  const canMarkPublished = reviewApproved && workspace.publish.status !== "manual_published";
+  const hasPublishableDraft = !topicChange && reviewApproved && publishBinding.enabled && !["published", "manual_published"].includes(workspace.publish.status);
+  const canMarkPublished = !topicChange && reviewApproved && workspace.publish.status !== "manual_published";
   const selectedAsset = workspace.assets[selectedAssetIndex] || workspace.assets[0];
   const selectedCard = workspace.draft?.imageCards?.[selectedAssetIndex];
   const selectedSeriesAsset = seriesPreviewIndex === null ? null : characterSeries[seriesPreviewIndex];
@@ -447,9 +478,17 @@ export function App() {
                 <p className="brand-description">新账号默认按定位设计品牌主体、配色与版式；也可上传任意本地图片（人物、动物、物体、植物或图形）。Agent 会锁定可见特征，并把裁切参考图扩展为一致的半身、贴纸或吉祥物系列；所有配图都沿用这套母版。</p>
                 {identityLock && <div className="identity-summary"><p><strong>品牌主体：</strong>{identityLock.subject || identityLock.character}</p><p><strong>可辨识特征：</strong>{identityLock.distinctiveFeatures || identityLock.faceAndHair}</p><p><strong>系列形态：</strong>{identityLock.canonicalForm || identityLock.outfit}</p><p><strong>绘制方式：</strong>{identityLock.renderingStyle}</p></div>}
                 {characterReady && <><div className="brand-theme"><div><strong>{workspace.brandVisualIdentity?.name}</strong><span>{workspace.brandVisualIdentity?.typography}</span></div><Palette palette={workspace.brandVisualIdentity?.palette} /></div><p className="brand-rule">{workspace.brandVisualIdentity?.composition}</p></>}
+                {!characterLocked && <div className="brand-series-options">
+                  <div className="brand-series-options-heading"><strong>系列形象生成方式</strong><span>默认完全沿用工作台现有 Agent 系统提示；自定义只追加本次视觉指令。</span></div>
+                  <div className="brand-series-mode-options" role="radiogroup" aria-label="选择系列形象生成方式">
+                    <label className={brandSeriesMode === "default" ? "brand-series-mode brand-series-mode--active" : "brand-series-mode"}><input type="radio" name="brand-series-mode" value="default" checked={brandSeriesMode === "default"} onChange={() => setBrandSeriesMode("default")} disabled={busy || uploadBusy} /><span><strong>默认生成</strong><small>使用当前内置系统提示，保持工作台原有生成方式。</small></span></label>
+                    <label className={brandSeriesMode === "custom" ? "brand-series-mode brand-series-mode--active" : "brand-series-mode"}><input type="radio" name="brand-series-mode" value="custom" checked={brandSeriesMode === "custom"} onChange={() => setBrandSeriesMode("custom")} disabled={busy || uploadBusy} /><span><strong>自定义提示词</strong><small>为本次系列指定画风、构图、氛围或道具。</small></span></label>
+                  </div>
+                  {brandSeriesMode === "custom" && <label className="custom-brand-series-prompt">自定义系列形象提示词<textarea value={customBrandSeriesPrompt} onChange={(event) => setCustomBrandSeriesPrompt(event.target.value)} maxLength={1600} disabled={busy || uploadBusy} placeholder="例如：复古丝网印刷海报，明亮撞色，半身贴纸构图；保留上传主体的可辨识特征。" /><small>{customBrandSeriesPrompt.length}/1600 · 身份锁定、单主体、透明背景和六个动作仍会强制保留。</small></label>}
+                </div>}
                 <div className="character-actions">
-                  {!characterHasAvatar && <button className="primary-small" onClick={() => startJob("/api/jobs/avatar", { mode: "generate_from_brief", brief: `账号定位：${positioning}` })} disabled={busy || uploadBusy || !positioning.trim()}>{busy && job.type === "avatar" ? "Agent 正在生成品牌" : "按账号定位生成品牌角色"}</button>}
-                  {characterHasAvatar && !characterReady && <button className="primary-small" onClick={() => startJob("/api/jobs/avatar", { mode: "uploaded_reference" })} disabled={busy || uploadBusy}>{busy && job.type === "avatar" ? "Agent 正在生成系列" : "生成 6 个品牌系列形象"}</button>}
+                  {!characterHasAvatar && <button className="primary-small" onClick={startBrandSeriesGeneration} disabled={busy || uploadBusy || !positioning.trim() || (brandSeriesMode === "custom" && !customBrandSeriesPrompt.trim())}>{busy && job.type === "avatar" ? "Agent 正在生成品牌" : brandSeriesMode === "custom" ? "按自定义提示生成品牌角色" : "按账号定位生成品牌角色"}</button>}
+                  {characterHasAvatar && !characterLocked && <button className="primary-small" onClick={startBrandSeriesGeneration} disabled={busy || uploadBusy || (brandSeriesMode === "custom" && !customBrandSeriesPrompt.trim())}>{busy && job.type === "avatar" ? "Agent 正在生成系列" : characterReady ? (brandSeriesMode === "custom" ? "按自定义提示重新生成系列" : "重新生成品牌系列形象") : (brandSeriesMode === "custom" ? "按自定义提示生成 6 个系列形象" : "生成 6 个品牌系列形象")}</button>}
                   {characterReady && <button className={characterLocked ? "secondary-button" : "primary-small"} onClick={toggleCharacterLock} disabled={busy || uploadBusy}>{characterLocked ? "解除角色锁定" : "确认并锁定品牌母版"}</button>}
                 </div>
                 {characterGenerationIssue && <p className="character-generation-error">上次系列生成未完成：{characterGenerationIssue.message} 你可以直接重试；动物或裁切头像不需要重新换图。</p>}
@@ -479,6 +518,14 @@ export function App() {
             <div className="topic-list">
               {workspace.research.topics.map((topic, index) => <TopicEditorCard key={topic.id} topic={topic} index={index} active={topic.id === workspace.selectedTopicId} busy={busy} onSelect={selectTopic} onSave={saveTopic} />)}
             </div>
+            {topicChange && <section className="topic-change-notice" data-testid="topic-change-notice">
+              <div><p className="eyebrow">选题切换待确认</p><h3>上一选题产物仍保留</h3><p>你已切换到「{topicChange.toTopicTitle || selectedTopic?.title}」。「{topicChange.fromTopicTitle || "上一选题"}」的拆解、文稿与配图仍可查看，但不会被当作当前选题继续处理或发布。</p></div>
+              <div className="topic-change-actions">
+                {topicChange.status === "pending" && <button className="secondary-button" onClick={() => resolveTopicChange("retain")} disabled={busy}>暂不重新生成</button>}
+                <button className="primary-small" onClick={() => resolveTopicChange("regenerate")} disabled={busy}>按新选题重新生成</button>
+              </div>
+              {topicChange.status === "retained" && <small>已选择暂不重新生成。需要继续当前选题时，请点击“按新选题重新生成”。</small>}
+            </section>}
           </section>
 
           <section className="storyline-section" data-testid="storyline-section">
@@ -495,8 +542,8 @@ export function App() {
 
             {!breakdownReady ? (
               <section className="breakdown-empty">
-                <div><p className="eyebrow">05 / 热点拆解</p><h3>先理解为什么它有效，再生成原创内容</h3><p>{!characterLocked ? "请先锁定品牌角色。" : topicHasVerifiedGraphics ? "Agent 将用一个 Lingzao GitHub Skill 完成爆款类型、标题封面、逐页结构、互动机制和原创改写拆解。" : "当前热点尚未同时通过图文媒体与爆款门槛，请先重新扫描。"}</p></div>
-                <button className="generate-button" onClick={() => startJob("/api/jobs/deconstruct", { topicId: selectedTopic?.id })} disabled={busy || !selectedTopic || !topicHasVerifiedGraphics || !characterLocked}>{busy && job.type === "deconstruct" ? "Agent 正在用 Lingzao 拆解" : "用 Lingzao 拆解热点"}</button>
+                <div><p className="eyebrow">05 / 热点拆解</p><h3>先理解为什么它有效，再生成原创内容</h3><p>{topicChange ? "当前仍保留上一选题的内容。请先决定是否按新选题重新生成，避免将旧内容误用于新主题。" : !characterLocked ? "请先锁定品牌角色。" : topicHasVerifiedGraphics ? "Agent 将用一个 Lingzao GitHub Skill 完成爆款类型、标题封面、逐页结构、互动机制和原创改写拆解。" : "当前热点尚未同时通过图文媒体与爆款门槛，请先重新扫描。"}</p></div>
+                <button className="generate-button" onClick={() => startJob("/api/jobs/deconstruct", { topicId: selectedTopic?.id })} disabled={busy || Boolean(topicChange) || !selectedTopic || !topicHasVerifiedGraphics || !characterLocked}>{busy && job.type === "deconstruct" ? "Agent 正在用 Lingzao 拆解" : "用 Lingzao 拆解热点"}</button>
               </section>
             ) : (
               <>
@@ -521,18 +568,19 @@ export function App() {
             )}
 
             {(rawDraft || humanizedDraft) && <section className="copy-version-studio">
-              <div className="copy-studio-heading"><div><p className="eyebrow">06—07 / 文稿版本</p><h3>原始文稿与去 AI 味版本都可直接编辑</h3></div><p>保存上游版本会主动清空失效的下游资产，避免旧配图或旧审稿结果被误发布。</p></div>
-              <div className="copy-version-grid"><DraftVersionEditor version="raw" label="06 / 原始文稿" draft={rawDraft} busy={busy} onSave={saveDraft} /><DraftVersionEditor version="humanized" label="07 / 去 AI 味文稿" draft={humanizedDraft} busy={busy} onSave={saveDraft} /></div>
+              <div className="copy-studio-heading"><div><p className="eyebrow">06—07 / 文稿版本</p><h3>原始文稿与去 AI 味版本都可直接编辑</h3></div><p>{topicChange ? "这些文稿属于上一选题，当前只保留查看；请先处理选题切换后再编辑或继续生成。" : "保存上游版本会主动清空失效的下游资产，避免旧配图或旧审稿结果被误发布。"}</p></div>
+              <div className="copy-version-grid"><DraftVersionEditor version="raw" label="06 / 原始文稿" draft={rawDraft} busy={busy || Boolean(topicChange)} onSave={saveDraft} /><DraftVersionEditor version="humanized" label="07 / 去 AI 味文稿" draft={humanizedDraft} busy={busy || Boolean(topicChange)} onSave={saveDraft} /></div>
             </section>}
 
-            {rawDraftReady && <section className="humanize-panel"><div><p className="eyebrow">07 / 中文去 AI 味</p><h3>先保留事实和观点，再把表达改得像真人</h3><p>使用本项目 humanized-chinese-writing-polisher Skill；不会新增经历、数据或营销号热梗。</p></div><button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/humanize", {})} disabled={busy}>{busy && job.type === "humanize" ? "Agent 正在诊断并润色" : "执行去 AI 味"}</button></section>}
+            {rawDraftReady && !topicChange && <section className="humanize-panel"><div><p className="eyebrow">07 / 中文去 AI 味</p><h3>先保留事实和观点，再把表达改得像真人</h3><p>使用本项目 humanized-chinese-writing-polisher Skill；不会新增经历、数据或营销号热梗。</p></div><button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/humanize", {})} disabled={busy}>{busy && job.type === "humanize" ? "Agent 正在诊断并润色" : "执行去 AI 味"}</button></section>}
 
             {humanizedDraftReady && !assetsReady && workspace.humanization?.status === "completed" && <section className="humanize-result"><div className="subheading-row compact"><div><p className="eyebrow">去 AI 味记录</p><h3>已通过中文真人感质量检查</h3></div><StatusPill tone="live">单一 Skill</StatusPill></div><ul>{workspace.humanization.revisionNotes?.map((note) => <li key={note}>{note}</li>)}</ul></section>}
 
-            {humanizedDraftReady && !assetsReady && <button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/illustrate", {})} disabled={busy}>{busy && job.type === "illustrate" ? "Agent 正在生成逐页角色动作" : `生成 ${imageCount} 张配图与角色动作`}</button>}
+            {humanizedDraftReady && !assetsReady && !topicChange && <button className="generate-button generate-button--primary" onClick={() => startJob("/api/jobs/illustrate", {})} disabled={busy}>{busy && job.type === "illustrate" ? "Agent 正在生成逐页角色动作" : `生成 ${imageCount} 张配图与角色动作`}</button>}
 
             {assetsReady && <section className="review-workspace">
-              <div className="review-header"><div><p className="eyebrow">08 / 完整预览与审稿</p><h3>先看完整文稿和每张配图，再决定调整或发布</h3></div><StatusPill tone={reviewApproved ? "live" : "warning"}>{reviewApproved ? "预览已确认" : `待审 · 第 ${workspace.review?.round || 1} 版`}</StatusPill></div>
+              <div className="review-header"><div><p className="eyebrow">08 / 完整预览与审稿</p><h3>先看完整文稿和每张配图，再决定调整或发布</h3></div><StatusPill tone={topicChange ? "warning" : reviewApproved ? "live" : "warning"}>{topicChange ? "上一选题产物" : reviewApproved ? "预览已确认" : `待审 · 第 ${workspace.review?.round || 1} 版`}</StatusPill></div>
+              {topicChange && <p className="topic-change-review-note">当前预览属于「{topicChange.fromTopicTitle || "上一选题"}」，不会用于「{topicChange.toTopicTitle || selectedTopic?.title}」发布。请先在左侧决定是否按新选题重新生成。</p>}
               <div className="review-grid">
                 <div className="visual-review">
                   <button className="review-image-button" onClick={() => setPreviewOpen(true)} aria-label={`查看第 ${selectedAssetIndex + 1} 张配图原图`}><img src={selectedAsset?.url} alt={`第 ${selectedAssetIndex + 1} 张小红书配图完整预览`} /></button>
@@ -549,8 +597,8 @@ export function App() {
               </div>
               <div className="review-feedback">
                 <div className="review-feedback-heading"><div><p className="eyebrow">预览意见</p><h3>有意见就调整，没有意见就确认</h3></div>{workspace.review?.feedback && <span>上一轮：{workspace.review.feedback}</span>}</div>
-                <div className="review-input-row"><label>调整范围<select value={revisionScope} onChange={(event) => setRevisionScope(event.target.value)} disabled={busy}><option value="both">文稿与配图</option><option value="copy">仅文稿</option><option value="visual">仅配图</option></select></label><label className="review-comment">调整要求<textarea value={reviewInput} onChange={(event) => setReviewInput(event.target.value)} maxLength={1200} placeholder="例如：第 2 张文字再短一点；正文减少总结感；第 4 张角色动作换成下班后松一口气。" /></label></div>
-                <div className="review-actions"><span>{reviewInput.length}/1200 · 输入意见后执行调整；留空则确认当前版本</span><button className="secondary-button" onClick={() => startJob("/api/jobs/revise", { feedback: reviewInput, scope: revisionScope })} disabled={busy || !reviewInput.trim()}>{busy && job.type === "revise" ? "Agent 正在按意见调整" : "按意见调整"}</button><button className="publish-button" onClick={approveReview} disabled={busy || Boolean(reviewInput.trim()) || reviewApproved}>{reviewApproved ? "预览已确认" : publishBinding.enabled ? "预览无误，确认可发布" : "预览无误，确认产出"}</button></div>
+                <div className="review-input-row"><label>调整范围<select value={revisionScope} onChange={(event) => setRevisionScope(event.target.value)} disabled={busy || Boolean(topicChange)}><option value="both">文稿与配图</option><option value="copy">仅文稿</option><option value="visual">仅配图</option></select></label><label className="review-comment">调整要求<textarea value={reviewInput} onChange={(event) => setReviewInput(event.target.value)} maxLength={1200} disabled={busy || Boolean(topicChange)} placeholder="例如：第 2 张文字再短一点；正文减少总结感；第 4 张角色动作换成下班后松一口气。" /></label></div>
+                <div className="review-actions"><span>{topicChange ? "已切换选题，当前仅可查看上一选题预览。" : `${reviewInput.length}/1200 · 输入意见后执行调整；留空则确认当前版本`}</span><button className="secondary-button" onClick={() => startJob("/api/jobs/revise", { feedback: reviewInput, scope: revisionScope })} disabled={busy || Boolean(topicChange) || !reviewInput.trim()}>{busy && job.type === "revise" ? "Agent 正在按意见调整" : "按意见调整"}</button><button className="publish-button" onClick={approveReview} disabled={busy || Boolean(topicChange) || Boolean(reviewInput.trim()) || reviewApproved}>{reviewApproved ? "预览已确认" : publishBinding.enabled ? "预览无误，确认可发布" : "预览无误，确认产出"}</button></div>
               </div>
             </section>}
 

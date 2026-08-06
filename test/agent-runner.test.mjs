@@ -6,7 +6,7 @@ import test from "node:test";
 import sharp from "sharp";
 import { AgentRunner, assertXhsTitle, progressFromOutput } from "../server/agent-runner.mjs";
 import { addContentAccount, createFreshMultiAccountState, getContentAccount } from "../server/account-workspace.mjs";
-import { saveUploadedAvatar } from "../server/brand-character.mjs";
+import { normalizeBrandSeriesOptions, saveUploadedAvatar } from "../server/brand-character.mjs";
 import { isVerifiedViralSignal } from "../server/viral-filter.mjs";
 
 function fixtureState() {
@@ -97,6 +97,24 @@ test("storyline sync prompt is read-only and excludes comments and non-published
   assert.match(prompt, /严格只读任务/);
   assert.match(prompt, /不读取评论内容/);
   assert.match(prompt, /排除草稿、审核中、发布失败、视频/);
+});
+
+test("brand series keeps the existing default prompt and only adds custom art direction when requested", () => {
+  const runner = new AgentRunner({ root: process.cwd(), stateStore: { read: async () => fixtureState(), write: async () => {} } });
+  const defaultOptions = normalizeBrandSeriesOptions({});
+  const customOptions = normalizeBrandSeriesOptions({ seriesStyle: "custom", customPrompt: "复古丝网印刷海报，颗粒感，明亮撞色，半身贴纸构图" });
+
+  assert.deepEqual(defaultOptions, { seriesStyle: "default", customPrompt: "" });
+  assert.deepEqual(customOptions, { seriesStyle: "custom", customPrompt: "复古丝网印刷海报，颗粒感，明亮撞色，半身贴纸构图" });
+
+  const defaultPrompt = runner.buildPrompt({ type: "avatar", payload: { mode: "generate_from_brief", brief: "账号定位：内容创作", ...defaultOptions } }, fixtureState());
+  const customPrompt = runner.buildPrompt({ type: "avatar", payload: { mode: "generate_from_brief", brief: "账号定位：内容创作", ...customOptions } }, fixtureState());
+
+  assert.doesNotMatch(defaultPrompt, /用户自定义系列视觉提示/);
+  assert.match(customPrompt, /用户自定义系列视觉提示/);
+  assert.match(customPrompt, /复古丝网印刷海报/);
+  assert.match(customPrompt, /正好 6 个透明 PNG 系列形象/);
+  assert.throws(() => normalizeBrandSeriesOptions({ seriesStyle: "custom", customPrompt: "" }), /请填写自定义系列形象提示词/);
 });
 
 test("storyline sync result updates recovery status and imports verified posts", async () => {

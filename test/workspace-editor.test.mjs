@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyDraftEdit, archivePublishedStoryline, editTopic, mergeVerifiedStorylineEntries, setGenerationImageCount, storylineContext } from "../server/workspace-editor.mjs";
+import { applyDraftEdit, archivePublishedStoryline, editTopic, mergeVerifiedStorylineEntries, resolveTopicChange, selectTopic, setGenerationImageCount, storylineContext } from "../server/workspace-editor.mjs";
 
 function draft(mode = "raw") {
   return {
@@ -21,7 +21,7 @@ function stateFixture() {
   const humanized = { ...draft("humanized"), title: "真人感标题" };
   return {
     positioning: "面向希望稳定输出图文内容的创作者",
-    research: { signals: [{ mediaKind: "graphic", imageCount: 5 }], topics: [{ id: "topic-1", title: "旧选题", angle: "旧角度", reason: "旧理由", evidenceRefs: [0] }] },
+    research: { signals: [{ mediaKind: "graphic", imageCount: 5 }], topics: [{ id: "topic-1", title: "旧选题", angle: "旧角度", reason: "旧理由", evidenceRefs: [0] }, { id: "topic-2", title: "新选题", angle: "新角度", reason: "新理由", evidenceRefs: [0] }] },
     selectedTopicId: "topic-1",
     breakdown: { topicId: "topic-1", visualDirections: [{ id: "direction-1", name: "奶油手账" }] },
     selectedVisualDirectionId: "direction-1",
@@ -46,6 +46,69 @@ test("editing a topic preserves hotspot evidence and invalidates downstream prod
   assert.equal(state.copyVersions.raw, null);
   assert.equal(state.assets.length, 0);
   assert.equal(state.review, null);
+});
+
+test("switching topics retains the previous production until the user decides to regenerate", () => {
+  const state = stateFixture();
+  const previousDraft = state.draft;
+  const previousAssets = state.assets;
+
+  selectTopic(state, "topic-2");
+
+  assert.equal(state.selectedTopicId, "topic-2");
+  assert.equal(state.draft, previousDraft);
+  assert.equal(state.assets, previousAssets);
+  assert.equal(state.breakdown.topicId, "topic-1");
+  assert.deepEqual(state.topicChange, {
+    status: "pending",
+    fromTopicId: "topic-1",
+    fromTopicTitle: "旧选题",
+    fromPublish: { status: "ready" },
+    toTopicId: "topic-2",
+    toTopicTitle: "新选题",
+    changedAt: state.topicChange.changedAt,
+  });
+  assert.match(state.publish.message, /旧内容仍保留/);
+});
+
+test("explicit topic regeneration clears preserved production for the new topic", () => {
+  const state = stateFixture();
+  selectTopic(state, "topic-2");
+
+  resolveTopicChange(state, "regenerate");
+
+  assert.equal(state.topicChange, null);
+  assert.equal(state.breakdown, null);
+  assert.equal(state.draft, null);
+  assert.equal(state.copyVersions.raw, null);
+  assert.equal(state.assets.length, 0);
+  assert.match(state.publish.message, /按新选题重新生成/);
+});
+
+test("returning to the source topic keeps an already published result from becoming publishable again", () => {
+  const state = stateFixture();
+  state.publish = { status: "published", noteId: "note-1", url: "https://example.invalid/note-1", message: "已发布" };
+
+  selectTopic(state, "topic-2");
+  selectTopic(state, "topic-1");
+
+  assert.equal(state.topicChange, null);
+  assert.equal(state.publish.status, "published");
+  assert.equal(state.publish.noteId, "note-1");
+});
+
+test("multiple topic switches keep the original published result protected", () => {
+  const state = stateFixture();
+  state.research.topics.push({ id: "topic-3", title: "第三选题", angle: "第三角度", reason: "第三理由", evidenceRefs: [0] });
+  state.publish = { status: "published", noteId: "note-1", url: "https://example.invalid/note-1", message: "已发布" };
+
+  selectTopic(state, "topic-2");
+  selectTopic(state, "topic-3");
+  selectTopic(state, "topic-1");
+
+  assert.equal(state.topicChange, null);
+  assert.equal(state.publish.status, "published");
+  assert.equal(state.publish.noteId, "note-1");
 });
 
 test("editing raw copy keeps card actions and invalidates humanized copy and visuals", () => {

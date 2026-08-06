@@ -7,11 +7,11 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import { AgentRunner, assertReaderFacingContent, assertXhsTitle } from "./agent-runner.mjs";
 import { addContentAccount, createFreshMultiAccountState, createPendingBrandVisualIdentity, createPublishBinding, getContentAccount, getWorkspace, isMultiAccountState, migrateLegacyWorkspace, safeFolderSegment, setActiveContentAccount, toClientWorkspace, touchContentAccount } from "./account-workspace.mjs";
-import { saveUploadedAvatar } from "./brand-character.mjs";
+import { normalizeBrandSeriesOptions, saveUploadedAvatar } from "./brand-character.mjs";
 import { createBrandCharacter, createBrandVisualIdentity, createDefaultState } from "./default-state.mjs";
 import { updateArchivedOutputStatus } from "./output-archive.mjs";
 import { CARD_RENDERER_VERSION } from "./render-cards.mjs";
-import { applyDraftEdit, archiveManuallyPublishedStoryline, editTopic, emptyCopyVersions, emptyStoryline, resetProductionAfterBrandChange, resetProductionAfterTopic, selectTopic, setGenerationImageCount, storylineContext } from "./workspace-editor.mjs";
+import { applyDraftEdit, archiveManuallyPublishedStoryline, editTopic, emptyCopyVersions, emptyStoryline, resetProductionAfterBrandChange, resetProductionAfterTopic, resolveTopicChange, selectTopic, setGenerationImageCount, storylineContext } from "./workspace-editor.mjs";
 import { isVerifiedViralSignal } from "./viral-filter.mjs";
 import { readImageDrafts } from "./xhs-draft-verifier.mjs";
 
@@ -52,6 +52,7 @@ async function normalizeContentWorkspace(workspace, { recoverRawDraft = false } 
   state.research ??= structuredClone(defaults.research);
   state.research.signals = Array.isArray(state.research.signals) ? state.research.signals : [];
   state.research.topics = Array.isArray(state.research.topics) ? state.research.topics : [];
+  if (!("topicChange" in state)) { state.topicChange = null; migrated = true; }
   state.breakdown ??= null;
   state.selectedVisualDirectionId ??= null;
   if (!("copyVersions" in state)) {
@@ -191,6 +192,12 @@ await runner.ensureCurrentRenderer();
 
 function activeWorkspace(state) {
   return getWorkspace(state);
+}
+
+function assertNoStaleTopicProduction(workspace) {
+  if (workspace.topicChange) {
+    throw new Error("当前保留的是上一选题产物，仅供查看；请切回原选题或按当前选题重新生成");
+  }
 }
 
 function activeAccount(state) {
@@ -379,6 +386,19 @@ app.put("/api/topics/:id/select", async (request, response) => {
   }
 });
 
+app.put("/api/topic-change", async (request, response) => {
+  if (runner.activeJobId) return response.status(409).json({ error: "Agent 任务执行中，暂时不能处理选题切换" });
+  try {
+    const state = await stateStore.read();
+    resolveTopicChange(activeWorkspace(state), String(request.body?.action || ""));
+    touchContentAccount(state);
+    await stateStore.write(state);
+    responseWorkspace(response, state);
+  } catch (error) {
+    response.status(400).json({ error: error.message });
+  }
+});
+
 app.put("/api/topics/:id", async (request, response) => {
   if (runner.activeJobId) return response.status(409).json({ error: "Agent 任务执行中，暂时不能编辑选题" });
   try {
@@ -399,6 +419,7 @@ app.put("/api/drafts/:version", async (request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     const edited = applyDraftEdit(workspace, version, request.body || {});
     assertXhsTitle(edited.title, version === "raw" ? "手动编辑原始文稿" : "手动编辑去 AI 味文稿");
     const visualDirection = workspace.breakdown?.visualDirections?.find((item) => item.id === workspace.selectedVisualDirectionId);
@@ -414,6 +435,7 @@ app.put("/api/drafts/:version", async (request, response) => {
 app.post("/api/jobs/avatar", async (request, response) => {
   try {
     const mode = String(request.body?.mode || "uploaded_reference");
+    const seriesOptions = normalizeBrandSeriesOptions(request.body || {});
     if (runner.activeJobId) return response.status(409).json({ error: "已有 Agent 任务正在执行，请等待完成" });
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
@@ -427,6 +449,7 @@ app.post("/api/jobs/avatar", async (request, response) => {
         mode,
         brief: workspace.brandCharacter.brief || "用户本地上传的品牌角色母版",
         sourcePath: workspace.brandCharacter.avatar.absolutePath,
+        ...seriesOptions,
       })));
     }
     if (mode !== "generate_from_brief") return response.status(400).json({ error: "品牌角色生成方式无效" });
@@ -436,7 +459,7 @@ app.post("/api/jobs/avatar", async (request, response) => {
     workspace.brandCharacter.updatedAt = new Date().toISOString();
     touchContentAccount(state);
     await stateStore.write(state);
-    response.status(202).json(await runner.createJob("avatar", jobForActiveAccount(state, { mode, brief })));
+    response.status(202).json(await runner.createJob("avatar", jobForActiveAccount(state, { mode, brief, ...seriesOptions })));
   } catch (error) {
     response.status(409).json({ error: error.message });
   }
@@ -446,6 +469,7 @@ app.post("/api/jobs/draft", async (request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     const topic = workspace.research.topics.find((item) => item.id === request.body?.topicId);
     const visualDirection = workspace.breakdown?.visualDirections?.find((item) => item.id === request.body?.visualDirectionId);
     if (!workspace.brandCharacter?.locked || !workspace.brandCharacter?.avatar) {
@@ -465,6 +489,7 @@ app.post("/api/jobs/humanize", async (_request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     if (!workspace.draft || workspace.draft.mode !== "raw") {
       return response.status(400).json({ error: "请先生成原始文稿，再执行去 AI 味" });
     }
@@ -478,6 +503,7 @@ app.post("/api/jobs/illustrate", async (_request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     const visualDirection = workspace.breakdown?.visualDirections?.find((item) => item.id === workspace.selectedVisualDirectionId);
     if (!workspace.draft || workspace.draft.mode !== "humanized") {
       return response.status(400).json({ error: "请先完成中文去 AI 味，再生成配图" });
@@ -495,6 +521,7 @@ app.post("/api/jobs/revise", async (request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     const feedback = String(request.body?.feedback || "").trim().slice(0, 1200);
     const scope = String(request.body?.scope || "both");
     if (!feedback) return response.status(400).json({ error: "请填写需要调整的具体内容" });
@@ -523,6 +550,11 @@ app.post("/api/review/approve", async (request, response) => {
   if (runner.activeJobId) return response.status(409).json({ error: "Agent 任务执行中，暂时不能确认预览" });
   const state = await stateStore.read();
   const workspace = activeWorkspace(state);
+  try {
+    assertNoStaleTopicProduction(workspace);
+  } catch (error) {
+    return response.status(400).json({ error: error.message });
+  }
   const account = activeAccount(state);
   if (!workspace.draft || workspace.draft.mode !== "humanized" || workspace.assets.length === 0) {
     return response.status(400).json({ error: "当前没有可确认的完整文稿和配图" });
@@ -545,6 +577,7 @@ app.post("/api/storyline/mark-published", async (_request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     const account = activeAccount(state);
     if (!workspace.draft || workspace.draft.mode !== "humanized" || workspace.assets.length === 0 || workspace.review?.status !== "approved") {
       throw new Error("请先完成配图并确认完整预览，再手动标记已发布");
@@ -564,6 +597,7 @@ app.post("/api/jobs/deconstruct", async (request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     const topic = workspace.research.topics.find((item) => item.id === request.body?.topicId);
     if (!topic) return response.status(400).json({ error: "请先确认一个选题" });
     if (!workspace.brandCharacter?.locked || !workspace.brandCharacter?.avatar) {
@@ -599,9 +633,11 @@ app.post("/api/jobs/publish", async (request, response) => {
   try {
     const state = await stateStore.read();
     const workspace = activeWorkspace(state);
+    assertNoStaleTopicProduction(workspace);
     const account = activeAccount(state);
     const mode = String(request.body?.mode || "");
     if (!["publish_now", "save_draft"].includes(mode)) return response.status(400).json({ error: "请选择立即发布或暂缓发布" });
+    if (["published", "manual_published"].includes(workspace.publish?.status)) return response.status(409).json({ error: "当前选题内容已标记发布，不能重复自动发布" });
     if (!account?.publishBinding?.enabled) return response.status(400).json({ error: "发布功能默认关闭。请先确认当前浏览器已登录目标账号，并手动启用发布账号。" });
     const expectedConfirmation = mode === "save_draft" ? "SAVE_DRAFT_CONFIRMED" : "PUBLISH_NOW_CONFIRMED";
     if (request.body?.confirmation !== expectedConfirmation) return response.status(400).json({ error: mode === "save_draft" ? "缺少明确的暂存确认" : "缺少明确的立即发布确认" });

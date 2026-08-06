@@ -1,0 +1,121 @@
+name: Build Windows x64 verification package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-x64:
+    name: Build unsigned Windows x64 installer
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Freeze build verification contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = node -p "require('./package.json').version"
+          $evidenceRoot = Join-Path $env:RUNNER_TEMP "agent-xhs-windows-build-evidence"
+          New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+          $installerPath = "release/Agent-XHS-Workbench-Setup-$version-x64.exe"
+          $contract = [ordered]@{
+            schemaVersion = 1
+            purpose = "Build and verify an unsigned Windows x64 NSIS installer"
+            stage = "build-verification"
+            releaseCreated = $false
+            source = [ordered]@{ ref = $env:GITHUB_REF; commit = $env:GITHUB_SHA; runner = "windows-2022"; node = "22" }
+            artifactSet = @([ordered]@{ path = $installerPath; architecture = "x64"; installer = "NSIS" })
+            acceptanceScope = [ordered]@{
+              packagedRuntimeSmoke = "required"
+              installerInstallUninstallUpgrade = "not evaluated by this workflow"
+              codeSigning = "unsigned; status recorded as evidence"
+            }
+          }
+          $contract | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidenceRoot "release-contract.json") -Encoding utf8
+          "WINDOWS_EVIDENCE_ROOT=$evidenceRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WINDOWS_INSTALLER_PATH=$installerPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run workflow tests
+        run: npm test
+
+      - name: Package Windows x64 NSIS installer
+        run: npm run package:win
+
+      - name: Verify package and run packaged smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Join-Path $env:GITHUB_WORKSPACE $env:WINDOWS_INSTALLER_PATH
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "Expected installer was not produced: $installer"
+          }
+
+          $unpacked = Join-Path $env:GITHUB_WORKSPACE "release/win-unpacked"
+          if (-not (Test-Path -LiteralPath $unpacked -PathType Container)) {
+            throw "electron-builder did not produce win-unpacked"
+          }
+          foreach ($relativePath in @(".data", "output", "public/generated", "public/brand/avatars", "public/brand/actions")) {
+            if (Test-Path -LiteralPath (Join-Path $unpacked $relativePath)) {
+              throw "Runtime data must not be packaged: $relativePath"
+            }
+          }
+
+          $app = @(Get-ChildItem -LiteralPath $unpacked -Filter "*.exe" -File | Where-Object { $_.Name -notlike "Uninstall*" })
+          if ($app.Count -ne 1) {
+            throw "Expected exactly one packaged application executable; found $($app.Count)"
+          }
+
+          $smokeLog = Join-Path $env:WINDOWS_EVIDENCE_ROOT "packaged-smoke-test.txt"
+          & $app[0].FullName "--smoke-test" *>&1 | Tee-Object -FilePath $smokeLog
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged smoke test failed with exit code $LASTEXITCODE"
+          }
+          if (-not (Select-String -LiteralPath $smokeLog -Pattern "AGENT_XHS_DESKTOP_SMOKE_OK" -Quiet)) {
+            throw "Packaged smoke test did not report success"
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          $signing = [ordered]@{
+            status = [string]$signature.Status
+            statusMessage = [string]$signature.StatusMessage
+            signed = $signature.Status -eq "Valid"
+            impact = "This artifact is not promoted to a GitHub Release and may show an operating-system trust warning when unsigned."
+          }
+          $signing | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $env:WINDOWS_EVIDENCE_ROOT "signing.json") -Encoding utf8
+
+          $hash = Get-FileHash -LiteralPath $installer -Algorithm SHA256
+          "$($hash.Hash)  $([System.IO.Path]::GetFileName($installer))" | Set-Content -LiteralPath (Join-Path $env:WINDOWS_EVIDENCE_ROOT "SHA256SUMS.txt") -Encoding ascii
+          $manifest = [ordered]@{
+            installer = [ordered]@{ path = $env:WINDOWS_INSTALLER_PATH; sha256 = $hash.Hash; sizeBytes = (Get-Item -LiteralPath $installer).Length }
+            packagedExecutable = $app[0].Name
+            smokeTest = "passed"
+            signingEvidence = "signing.json"
+          }
+          $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $env:WINDOWS_EVIDENCE_ROOT "manifest.json") -Encoding utf8
+
+      - name: Upload unsigned build-verification artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-unsigned-build-verification
+          path: |
+            release/Agent-XHS-Workbench-Setup-*-x64.exe
+            ${{ runner.temp }}/agent-xhs-windows-build-evidence
+          if-no-files-found: error
+          retention-days: 14

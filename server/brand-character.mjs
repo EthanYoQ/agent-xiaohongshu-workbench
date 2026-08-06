@@ -5,6 +5,21 @@ import sharp from "sharp";
 
 export const AVATAR_MAX_BYTES = 10 * 1024 * 1024;
 export const AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+export const BRAND_SERIES_STYLES = new Set(["default", "custom"]);
+export const BRAND_SERIES_CUSTOM_PROMPT_MAX_LENGTH = 1600;
+
+export function normalizeBrandSeriesOptions(value = {}) {
+  const seriesStyle = String(value?.seriesStyle || "default").trim() || "default";
+  if (!BRAND_SERIES_STYLES.has(seriesStyle)) throw new Error("系列形象生成方式无效");
+
+  const customPrompt = String(value?.customPrompt || "").trim();
+  if (customPrompt.length > BRAND_SERIES_CUSTOM_PROMPT_MAX_LENGTH) {
+    throw new Error(`自定义系列形象提示词不能超过 ${BRAND_SERIES_CUSTOM_PROMPT_MAX_LENGTH} 个字符`);
+  }
+  if (seriesStyle === "custom" && !customPrompt) throw new Error("请填写自定义系列形象提示词（已选择自定义模式）");
+
+  return { seriesStyle, customPrompt: seriesStyle === "custom" ? customPrompt : "" };
+}
 
 export async function saveUploadedAvatar({ root, buffer, contentType }) {
   if (!AVATAR_MIME_TYPES.has(String(contentType || "").toLowerCase())) {

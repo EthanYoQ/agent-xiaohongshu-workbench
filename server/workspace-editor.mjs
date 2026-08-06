@@ -11,6 +11,7 @@ export function emptyStoryline() {
 }
 
 export function resetProductionAfterTopic(state, message = "选题已更新，等待重新拆解") {
+  state.topicChange = null;
   state.breakdown = null;
   state.selectedVisualDirectionId = null;
   state.draft = null;
@@ -19,6 +20,21 @@ export function resetProductionAfterTopic(state, message = "选题已更新，�
   state.assets = [];
   state.review = null;
   state.publish = { status: "not_started", noteId: null, url: null, message };
+}
+
+function hasProductionToPreserve(state) {
+  return Boolean(
+    state.breakdown
+    || state.draft
+    || state.copyVersions?.raw
+    || state.copyVersions?.humanized
+    || state.assets?.length
+    || state.review,
+  );
+}
+
+function topicById(state, topicId) {
+  return state.research?.topics?.find((item) => item.id === topicId) || null;
 }
 
 export function resetProductionAfterBrandChange(state, message = "品牌角色已更新，等待重新拆解") {
@@ -44,11 +60,58 @@ export function setGenerationImageCount(state, value) {
 }
 
 export function selectTopic(state, topicId) {
-  const topic = state.research?.topics?.find((item) => item.id === topicId);
+  const topic = topicById(state, topicId);
   if (!topic) throw new Error("选题不存在，请重新运行热点研究");
-  if (state.selectedTopicId !== topicId) resetProductionAfterTopic(state, "已切换选题，等待重新拆解");
+  if (state.selectedTopicId !== topicId) {
+    const priorTopic = topicById(state, state.selectedTopicId);
+    const priorChange = state.topicChange;
+    const productionTopic = topicById(state, priorChange?.fromTopicId || state.breakdown?.topicId || priorTopic?.id);
+    state.selectedTopicId = topicId;
+
+    if (priorChange?.fromTopicId === topicId) {
+      state.topicChange = null;
+      state.publish = {
+        ...(priorChange.fromPublish || state.publish || {}),
+        message: priorChange.fromPublish?.message || "已回到原选题，之前生成的内容可继续查看和处理",
+      };
+      return topic;
+    }
+
+    if (hasProductionToPreserve(state)) {
+      const publishBeforeSwitch = {
+        ...(priorChange?.fromPublish || state.publish || { status: "not_started", noteId: null, url: null }),
+      };
+      state.topicChange = {
+        status: "pending",
+        fromTopicId: productionTopic?.id || priorTopic?.id || null,
+        fromTopicTitle: productionTopic?.title || priorTopic?.title || "上一选题",
+        fromPublish: publishBeforeSwitch,
+        toTopicId: topic.id,
+        toTopicTitle: topic.title,
+        changedAt: new Date().toISOString(),
+      };
+      state.publish = { status: "not_started", noteId: null, url: null, message: "已切换选题；旧内容仍保留，待确认是否按新选题重新生成" };
+      return topic;
+    }
+
+    resetProductionAfterTopic(state, "已切换选题，等待重新拆解");
+  }
   state.selectedTopicId = topicId;
   return topic;
+}
+
+export function resolveTopicChange(state, action) {
+  if (!state.topicChange) throw new Error("当前没有待确认的选题切换");
+  if (action === "retain") {
+    state.topicChange = { ...state.topicChange, status: "retained", resolvedAt: new Date().toISOString() };
+    state.publish = { status: "not_started", noteId: null, url: null, message: "已保留上一选题的内容；如需继续当前选题，请重新生成内容" };
+    return state.topicChange;
+  }
+  if (action === "regenerate") {
+    resetProductionAfterTopic(state, "已确认按新选题重新生成，旧内容已清空");
+    return null;
+  }
+  throw new Error("选题切换处理方式无效");
 }
 
 export function editTopic(state, topicId, input) {
