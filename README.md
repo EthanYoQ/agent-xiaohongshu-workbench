@@ -2,15 +2,17 @@
   <img src="./public/project-logo.png" alt="Agent 小红书工作台：从热点到发布的 Agent 工作流" width="100%" />
 </p>
 
-<h1 align="center">小红书工作台</h1>
+<h1 align="center">小红书图文内容工作台</h1>
 
-</p>
-<h2 align="center">如果有帮到你，麻烦动动小手点亮STAR ✨✨</h2>
-</p>
-
-> 一个依托 **Codex CLI** 运行的本地小红书图文内容工作台：从热点研究、笔记拆解、原创文稿和去 AI 味，到品牌配图、完整预览与人工确认发布。
+> 把账号定位、热点研究、选题、原创文稿、品牌配图、完整预览和人工确认组织成一条可控流程。
 
 Agent 小红书工作台面向需要持续运营多个图文内容账号的创作者。每个内容账号拥有独立的定位、品牌角色、视觉语言、热点缓存、稿件和故事线；它们共用一个仅用于浏览器研究的执行会话。它不接入第三方模型 API，也不托管账号数据；Codex Agent 在你的本地环境中完成推理和浏览器操作。
+
+<p align="center">
+  <a href="https://github.com/EthanYoQ/agent-xiaohongshu-workbench/releases/latest"><strong>下载 Windows 安装包</strong></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://github.com/EthanYoQ/agent-xiaohongshu-workbench/releases/tag/v0.2.1"><strong>下载 Apple Silicon macOS 安装包</strong></a>
+</p>
 
 ## 工作台界面
 
