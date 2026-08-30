@@ -1,0 +1,38 @@
+name: Workbench quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - xiaoshimei-v2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workbench-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked runtime dependencies
+        run: npm ci --omit=dev --workspaces=false
+      - name: Run complete regression suite
+        run: npm test
+      - name: Build production artifact
+        run: npm run build
+      - name: Reject tracked runtime and secret material
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden="$(git ls-files '.data/**' 'public/generated/**' 'public/brand/avatars/**' 'public/brand/actions/**' '.env*' | grep -vE '/\.gitkeep$|^\.env\.example$' || true)"
+          test -z "$forbidden" || { printf '%s\n' "$forbidden"; exit 1; }

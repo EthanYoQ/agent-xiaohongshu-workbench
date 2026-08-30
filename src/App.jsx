@@ -1,3 +1,4 @@
+import { DirectCreatePanel } from "./DirectCreatePanel.jsx";
 import { useEffect, useMemo, useState } from "react";
 
 const TERMINAL_JOB_STATES = new Set(["completed", "failed"]);
@@ -425,7 +426,7 @@ export function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="header-account-zone">
-          <div className="brand-block"><span className="brand-name">AGENT 小红书工作台</span><span className="brand-subtitle">多账号图文工作流</span></div>
+          <div className="brand-block"><span className="brand-name">小师妹 Studio</span><span className="brand-subtitle">直接创作 + Agent 工作流</span></div>
           <div className="account-switcher">
             <button className="account-switcher-trigger" onClick={() => setAccountMenuOpen((open) => !open)} disabled={busy} aria-expanded={accountMenuOpen} aria-controls="content-account-menu">
               {workspace.brandCharacter?.avatar?.url && <img src={workspace.brandCharacter.avatar.url} alt="" />}
@@ -448,6 +449,8 @@ export function App() {
         </nav>
         <div className="runtime-status"><span className="operator-status"><span className={`runtime-dot ${accountContext.researchOperator?.status === "connected" ? "runtime-dot--live" : ""}`} /><span>采集执行账号：{accountContext.researchOperator?.status === "connected" ? "已连接（仅研究）" : "待连接"}</span></span><span className="runtime-divider" /><span>{toolStatus?.codex?.installed ? "Codex Agent 已就绪" : "正在检查本地 Agent"}</span><span className="runtime-divider" /><span>{toolStatus?.opencli?.installed ? "OpenCLI 已安装" : "OpenCLI 未连接"}</span></div>
       </header>
+
+      <DirectCreatePanel />
 
       <main className="workspace-grid">
         <section className="left-column">

@@ -1,0 +1,21 @@
+{
+  "schema": "xiaoshimei.generation-profile-contract.v2",
+  "identity": {
+    "account_owner": "个人内容账号",
+    "account_goal": "使用稳定品牌主体和清楚、克制的表达，把真实生活中的复杂问题讲明白。",
+    "fixed_character_ip": "使用账号档案中由用户确认的唯一品牌主体。",
+    "story_thesis": "记录真实学习、生活实践与被现实修正的成长过程。"
+  },
+  "media": {
+    "constraint": "IMAGE_FIRST：先以图文建立叙事与视觉辨识度。",
+    "visual_atmosphere": "自然、温暖、留白、轻叙事，不复刻在世艺术家或具体影视角色。",
+    "allowed_scene_elements": ["自然环境", "真实室内", "生活器物", "真实动作"]
+  },
+  "account_strategy_peers": [],
+  "visual_references": [],
+  "single_post_mechanisms": [],
+  "claim_boundaries": [
+    "用户尚未提供或外部未核验的信息必须标成未知",
+    "不得暗示官方关系、建成实景、疗效或资格认证"
+  ]
+}

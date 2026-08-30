@@ -1,0 +1,252 @@
+{
+  "schema": "mesy.living-logic-model.v1",
+  "object_id": "xiaoshimei-studio-v2",
+  "object_root": "Projects/Workstreams/Xiaoshimei-Studio-v2",
+  "version": "0.2.0",
+  "nodes": [
+    {
+      "id": "CAP-CREATE",
+      "type": "CAP",
+      "label": "小红书图文端到端生产",
+      "spec": {
+        "goal": "从研究/写作/配图/排版到发布包与现实反馈闭环"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/PRODUCT_CONTRACT.md",
+          "kind": "contract"
+        }
+      ]
+    },
+    {
+      "id": "BLOCK-IMAGE",
+      "type": "BLOCK",
+      "label": "插图生成与母版切片",
+      "spec": {
+        "role": "把逐页语义转为可安全裁切图像资产"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/mother-sheet.mjs",
+          "kind": "code"
+        }
+      ]
+    },
+    {
+      "id": "FLOW-MOTHER-SHEET",
+      "type": "FLOW",
+      "label": "母版切片与媒体角色适配",
+      "spec": {
+        "invariant": "不得用固定大内缩补救主体裁断；媒体角色决定 fit policy"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/mother-sheet.mjs",
+          "kind": "code"
+        }
+      ]
+    },
+    {
+      "id": "BLOCK-EDITOR",
+      "type": "BLOCK",
+      "label": "HTML/Fabric 编辑与导出",
+      "spec": {
+        "invariant": "两个编辑面都必须拒绝 blank/flat/image-region invalid export"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/MaturePageEditor.jsx",
+          "kind": "code"
+        }
+      ]
+    },
+    {
+      "id": "FLOW-EXPORT",
+      "type": "FLOW",
+      "label": "发布包导出验证",
+      "spec": {
+        "invariant": "导出前验证页面与图片区域非空且有真实变化"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/export-image-verification.mjs",
+          "kind": "code"
+        }
+      ]
+    },
+    {
+      "id": "STATE-REALITY",
+      "type": "STATE",
+      "label": "24h/72h/7d Reality Feedback",
+      "spec": {
+        "desired": "现实反馈进入后续 layout/crop fitness"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/reality-feedback.mjs",
+          "kind": "code"
+        }
+      ]
+    },
+    {
+      "id": "POL-REALITY",
+      "type": "POLICY",
+      "label": "Reality > actor narrative",
+      "spec": {
+        "rule": "实际导出与发布后数据必须由测试/对象回读证明"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/PRODUCT_CONTRACT.md",
+          "kind": "contract"
+        }
+      ]
+    },
+    {
+      "id": "EVD-IMAGE-TEST",
+      "type": "EVIDENCE",
+      "label": "母版切片回归测试",
+      "spec": {
+        "suite": "tests/mother-sheet.test.mjs"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/tests/mother-sheet.test.mjs",
+          "kind": "test"
+        }
+      ]
+    },
+    {
+      "id": "EVD-EXPORT-TEST",
+      "type": "EVIDENCE",
+      "label": "导出图片真实性测试",
+      "spec": {
+        "suite": "tests/export-image-verification.test.mjs"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/tests/export-image-verification.test.mjs",
+          "kind": "test"
+        }
+      ]
+    },
+    {
+      "id": "EVD-REALITY-TEST",
+      "type": "EVIDENCE",
+      "label": "现实反馈持久化测试",
+      "spec": {
+        "suite": "tests/reality-feedback.test.mjs"
+      },
+      "source_refs": [
+        {
+          "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/tests/reality-feedback.test.mjs",
+          "kind": "test"
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "from": "CAP-CREATE",
+      "to": "BLOCK-IMAGE",
+      "type": "contains"
+    },
+    {
+      "from": "CAP-CREATE",
+      "to": "BLOCK-EDITOR",
+      "type": "contains"
+    },
+    {
+      "from": "CAP-CREATE",
+      "to": "STATE-REALITY",
+      "type": "contains"
+    },
+    {
+      "from": "BLOCK-IMAGE",
+      "to": "FLOW-MOTHER-SHEET",
+      "type": "contains"
+    },
+    {
+      "from": "BLOCK-EDITOR",
+      "to": "FLOW-EXPORT",
+      "type": "contains"
+    },
+    {
+      "from": "FLOW-MOTHER-SHEET",
+      "to": "POL-REALITY",
+      "type": "constrained_by"
+    },
+    {
+      "from": "FLOW-EXPORT",
+      "to": "POL-REALITY",
+      "type": "constrained_by"
+    },
+    {
+      "from": "STATE-REALITY",
+      "to": "POL-REALITY",
+      "type": "constrained_by"
+    },
+    {
+      "from": "FLOW-MOTHER-SHEET",
+      "to": "EVD-IMAGE-TEST",
+      "type": "verified_by"
+    },
+    {
+      "from": "FLOW-EXPORT",
+      "to": "EVD-EXPORT-TEST",
+      "type": "verified_by"
+    },
+    {
+      "from": "STATE-REALITY",
+      "to": "EVD-REALITY-TEST",
+      "type": "verified_by"
+    }
+  ],
+  "problems": [
+    {
+      "id": "D08",
+      "state": "RESOLVED",
+      "claim": "固定 2% 内缩不识别真实网格线和背景",
+      "target_nodes": [
+        "FLOW-MOTHER-SHEET"
+      ],
+      "probe": {
+        "kind": "literal",
+        "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/mother-sheet.mjs",
+        "pattern": "MOTHER_SHEET_TILE_INSET_RATIO = 0.02",
+        "claim_true_when": "present"
+      },
+      "solution_ref": "TSK-260827-1640/Evidence/xiaoshimei-targeted-tests.log"
+    },
+    {
+      "id": "D13",
+      "state": "RESOLVED",
+      "claim": "Fabric 导出缺 blank/flat/image-region QA",
+      "target_nodes": [
+        "FLOW-EXPORT"
+      ],
+      "probe": {
+        "kind": "literal",
+        "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/MaturePageEditor.jsx",
+        "pattern": "verifyExportDataUrl",
+        "claim_true_when": "absent"
+      },
+      "solution_ref": "TSK-260827-1640/Evidence/xiaoshimei-targeted-tests.log"
+    },
+    {
+      "id": "D20",
+      "state": "OPEN",
+      "claim": "Reality feedback 已有但未进入 layout/crop fitness",
+      "target_nodes": [
+        "STATE-REALITY"
+      ],
+      "probe": {
+        "kind": "literal",
+        "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/layout-qa.mjs",
+        "pattern": "reality_feedback",
+        "claim_true_when": "absent"
+      },
+      "solution_ref": null
+    }
+  ]
+}

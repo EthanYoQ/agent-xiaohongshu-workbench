@@ -1,6 +1,8 @@
 import { exec } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import express from "express";
@@ -14,10 +16,18 @@ import { CARD_RENDERER_VERSION } from "./render-cards.mjs";
 import { applyDraftEdit, archiveManuallyPublishedStoryline, editTopic, emptyCopyVersions, emptyStoryline, resetProductionAfterBrandChange, resetProductionAfterTopic, resolveTopicChange, selectTopic, setGenerationImageCount, storylineContext } from "./workspace-editor.mjs";
 import { isVerifiedViralSignal } from "./viral-filter.mjs";
 import { readImageDrafts } from "./xhs-draft-verifier.mjs";
+import { createDirectArk } from "./direct-ark.mjs";
 
 const execAsync = promisify(exec);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeRoot = process.env.AGENT_XHS_RUNTIME_DIR ? path.resolve(process.env.AGENT_XHS_RUNTIME_DIR) : root;
+const canonicalStudioDist = process.env.XIAOSHIMEI_CANONICAL_DIST
+  ? path.resolve(process.env.XIAOSHIMEI_CANONICAL_DIST)
+  : path.resolve(root, "dist");
+const canonicalStudioPublic = process.env.XIAOSHIMEI_CANONICAL_PUBLIC
+  ? path.resolve(process.env.XIAOSHIMEI_CANONICAL_PUBLIC)
+  : path.resolve(root, "public");
+const canonicalGeneratedDir = path.join(canonicalStudioPublic, "generated");
 const dataDir = path.join(runtimeRoot, ".data");
 const statePath = path.join(dataDir, "workspace.json");
 const generatedDir = path.join(runtimeRoot, "public", "generated");
@@ -186,6 +196,7 @@ const stateStore = {
 };
 
 const runner = new AgentRunner({ root, runtimeRoot, stateStore });
+const directAi = createDirectArk({ runtimeRoot });
 await runner.initialize();
 await stateStore.read();
 await runner.ensureCurrentRenderer();
@@ -229,9 +240,51 @@ async function toolProbe(command) {
 }
 
 const app = express();
+const localExports = new Map();
 app.use(express.json({ limit: "200kb" }));
-app.use("/generated", express.static(generatedDir, { fallthrough: false }));
+app.use("/generated", express.static(canonicalGeneratedDir, { fallthrough: true, etag: false, maxAge: 0 }));
+app.use("/generated", express.static(generatedDir, { fallthrough: false, etag: false, maxAge: 0 }));
 app.use("/brand", express.static(brandDir, { fallthrough: false }));
+
+async function saveExportToDownloads(filename, bytes) {
+  const downloadsDir = path.join(homedir(), "Downloads");
+  await fs.mkdir(downloadsDir, { recursive: true });
+  const extension = path.extname(filename);
+  const stem = path.basename(filename, extension);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const suffix = attempt === 0 ? "" : `-${new Date().toISOString().replace(/[:.]/g, "-")}-${attempt}`;
+    const target = path.join(downloadsDir, `${stem}${suffix}${extension}`);
+    try {
+      await fs.writeFile(target, bytes, { flag: "wx" });
+      return target;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+  }
+  throw new Error("EXPORT_FILENAME_COLLISION_LIMIT");
+}
+
+app.post("/api/local-export", express.raw({ type: ["application/zip", "application/octet-stream"], limit: "120mb" }), async (request, response) => {
+  if (!Buffer.isBuffer(request.body) || request.body.length < 1) return response.status(400).json({ error: "EXPORT_BYTES_REQUIRED" });
+  const requestedName = decodeURIComponent(String(request.headers["x-export-filename"] || "download.zip"));
+  const filename = requestedName.replace(/[\\/\0\r\n]/g, "-").slice(0, 120) || "download.zip";
+  const token = randomUUID();
+  const savedPath = await saveExportToDownloads(filename, request.body);
+  localExports.set(token, { bytes: request.body, filename, createdAt: Date.now() });
+  for (const [id, value] of localExports) if (Date.now() - value.createdAt > 10 * 60_000) localExports.delete(id);
+  response.status(201).json({ download_url: `/api/local-export/${token}`, filename, size: request.body.length, saved_path: savedPath });
+});
+
+app.get("/api/local-export/:token", (request, response) => {
+  const item = localExports.get(String(request.params.token || ""));
+  if (!item) return response.status(404).json({ error: "EXPORT_NOT_FOUND_OR_EXPIRED" });
+  response.setHeader("content-type", "application/zip");
+  response.setHeader("content-length", String(item.bytes.length));
+  response.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(item.filename)}`);
+  response.setHeader("cache-control", "no-store");
+  response.on("finish", () => localExports.delete(request.params.token));
+  response.send(item.bytes);
+});
 
 app.get("/api/workspace", async (_request, response) => {
   responseWorkspace(response, await stateStore.read());
@@ -349,6 +402,40 @@ app.get("/api/status", async (_request, response) => {
     toolProbe("opencli --version"),
   ]);
   response.json({ codex, opencli, activeJobId: runner.activeJobId });
+});
+
+app.get("/api/direct-ai/status", async (_request, response) => {
+  try { response.json(await directAi.status()); }
+  catch (error) { response.status(500).json({ error: error.message || "AI 状态读取失败" }); }
+});
+
+app.get("/api/direct-ai/latest", async (_request, response) => {
+  try { response.json({ result: await directAi.latest() }); }
+  catch (error) { response.status(500).json({ error: error.message || "最近生成结果读取失败" }); }
+});
+
+app.put("/api/direct-ai/key", async (_request, response) => {
+  response.status(410).json({ error: "小师妹已切回火山方舟，API Key 由现有本机 Provider 安全管理。", code: "OPENAI_DISABLED" });
+});
+
+app.put("/api/direct-ai/config", async (_request, response) => {
+  response.status(410).json({ error: "小师妹已切回火山方舟，模型配置跟随本机 Provider。", code: "OPENAI_DISABLED" });
+});
+
+app.post("/api/direct-ai/test-image", async (request, response) => {
+  try { response.status(201).json(await directAi.testImage(request.body?.prompt)); }
+  catch (error) {
+    const status = error.code === "AI_KEY_MISSING" ? 409 : Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    response.status(status).json({ error: error.message || "测试生图失败", code: error.code || "IMAGE_TEST_FAILED" });
+  }
+});
+
+app.post("/api/direct-ai/quick-create", async (request, response) => {
+  try { response.status(201).json(await directAi.quickCreate({ topic: request.body?.topic, imageCount: request.body?.imageCount })); }
+  catch (error) {
+    const status = error.code === "AI_KEY_MISSING" ? 409 : Number(error.status) >= 400 && Number(error.status) < 600 ? Number(error.status) : 502;
+    response.status(status).json({ error: error.message || "直接创作失败", code: error.code || "DIRECT_CREATE_FAILED" });
+  }
 });
 
 app.get("/api/jobs/:id", async (request, response) => {
@@ -680,8 +767,9 @@ app.use((error, _request, response, next) => {
 });
 
 if (isProduction) {
-  app.use(express.static(path.join(root, "dist")));
-  app.get("/{*splat}", (_request, response) => response.sendFile(path.join(root, "dist", "index.html")));
+  const uiRoot = canonicalStudioDist;
+  app.use(express.static(uiRoot));
+  app.get("/{*splat}", (_request, response) => response.sendFile(path.join(uiRoot, "index.html")));
 } else {
   const vite = await createViteServer({ root, server: { middlewareMode: true }, appType: "spa" });
   app.use(vite.middlewares);

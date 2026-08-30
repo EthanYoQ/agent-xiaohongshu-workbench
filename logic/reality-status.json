@@ -1,0 +1,46 @@
+{
+  "schema": "mesy.living-logic-status.v1",
+  "status": "ALIGNED",
+  "generated_at": "2026-08-27T09:31:24.030749+00:00",
+  "object_id": "xiaoshimei-studio-v2",
+  "model_sha256": "bb4bcd0baea3418662d09f209f70c6e51907bd2e4717ce7a6ae44c4f03c0e331",
+  "source_hashes": {
+    "Projects/Workstreams/Xiaoshimei-Studio-v2/src/mother-sheet.mjs": "5232a2f280c92a9239e629ebed83efd387052e66e700609ef606a7486a0562bb",
+    "Projects/Workstreams/Xiaoshimei-Studio-v2/src/MaturePageEditor.jsx": "da63a2c8134bd2d1cb3e0371ed04df7af444cb7ec6f2d698c31a5eed7f1e44cd",
+    "Projects/Workstreams/Xiaoshimei-Studio-v2/src/layout-qa.mjs": "8e2c9cb5d318028f67521d4b4927e2f41acc09334685b355d9aa67ef08a9de31"
+  },
+  "unknown_count": 0,
+  "drift_count": 0,
+  "problems": [
+    {
+      "id": "D08",
+      "declared_state": "RESOLVED",
+      "verdict": "RESOLVED_CONFIRMED",
+      "evidence": {
+        "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/mother-sheet.mjs",
+        "sha256": "5232a2f280c92a9239e629ebed83efd387052e66e700609ef606a7486a0562bb",
+        "pattern_present": false
+      }
+    },
+    {
+      "id": "D13",
+      "declared_state": "RESOLVED",
+      "verdict": "RESOLVED_CONFIRMED",
+      "evidence": {
+        "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/MaturePageEditor.jsx",
+        "sha256": "da63a2c8134bd2d1cb3e0371ed04df7af444cb7ec6f2d698c31a5eed7f1e44cd",
+        "pattern_present": true
+      }
+    },
+    {
+      "id": "D20",
+      "declared_state": "OPEN",
+      "verdict": "OPEN_CONFIRMED",
+      "evidence": {
+        "path": "Projects/Workstreams/Xiaoshimei-Studio-v2/src/layout-qa.mjs",
+        "sha256": "8e2c9cb5d318028f67521d4b4927e2f41acc09334685b355d9aa67ef08a9de31",
+        "pattern_present": false
+      }
+    }
+  ]
+}

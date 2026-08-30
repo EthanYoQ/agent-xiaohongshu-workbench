@@ -1,25 +1,20 @@
 {
-  "name": "agent-xiaohongshu-workbench",
-  "version": "0.2.1",
-  "description": "由 Codex Agent 驱动的小红书图文内容工作台：热点研究、拆解、原创文稿、去 AI 味、品牌配图与人工确认发布。",
+  "name": "xiaoshimei-studio",
+  "version": "0.3.0",
+  "description": "小师妹 Studio：本地优先的小红书图文创作工作台，支持直接 AI 图文生成、编辑、审稿与人工发布。",
   "license": "MIT",
-  "author": "EthanYoQ",
+  "author": "Xiaoshimei Studio contributors",
   "private": false,
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
   },
-  "workspaces": [
-    "packages/share-site"
-  ],
   "scripts": {
     "dev": "node server/index.mjs",
     "build": "vite build",
-    "start": "node server/index.mjs --production",
-    "test": "node --test test/account-workspace.test.mjs test/agent-runner.test.mjs test/output-archive.test.mjs test/render-cards.test.mjs test/viral-filter.test.mjs test/workspace-editor.test.mjs test/xhs-draft-verifier.test.mjs",
-    "test:share": "npm --workspace @agent-xiaohongshu/share-site test",
-    "test:all": "npm run test && npm run test:share",
-    "build:share": "npm --workspace @agent-xiaohongshu/share-site run build",
+    "start": "node server/run-stack.mjs",
+    "start:web": "PORT=4184 HOST=127.0.0.1 node server/index.mjs --production",
+    "test": "node --test test/direct-ai.test.mjs test/account-workspace.test.mjs test/agent-runner.test.mjs test/output-archive.test.mjs test/render-cards.test.mjs test/viral-filter.test.mjs test/workspace-editor.test.mjs test/xhs-draft-verifier.test.mjs test/canonical-generated-assets.test.mjs tests/*.test.mjs",
     "setup": "node scripts/verify-runtime.mjs",
     "verify:runtime": "node scripts/verify-runtime.mjs",
     "make:desktop-icon": "node scripts/make-desktop-icon.mjs",
@@ -28,12 +23,19 @@
     "package:mac:arm64": "npm run build && npm run make:mac-icon && electron-builder --mac dmg zip --arm64 --publish never"
   },
   "dependencies": {
+    "@anu3ev/fabric-image-editor": "^0.10.24",
     "@jackwener/opencli": "1.8.6",
     "@vitejs/plugin-react": "5.0.4",
     "express": "5.1.0",
+    "html2canvas": "^1.4.1",
+    "jszip": "^3.10.1",
+    "lucide-react": "^1.31.0",
+    "openai": "7.5.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "react-moveable": "^0.56.0",
     "sharp": "0.34.4",
+    "undici": "^6.27.0",
     "vite": "6.4.2"
   },
   "devDependencies": {
@@ -43,8 +45,8 @@
   },
   "main": "desktop/main.cjs",
   "build": {
-    "appId": "com.ethanyoq.agentxiaohongshuworkbench",
-    "productName": "Agent 小红书工作台",
+    "appId": "com.mesy.xiaoshimei.studio",
+    "productName": "小师妹 Studio",
     "asar": false,
     "directories": {
       "output": "release",
@@ -77,7 +79,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "Agent-XHS-Workbench-Setup-${version}-${arch}.${ext}"
+      "artifactName": "Xiaoshimei-Studio-Setup-${version}-${arch}.${ext}"
     },
     "mac": {
       "target": [
@@ -97,14 +99,14 @@
       "icon": "build/icon.icns",
       "identity": null,
       "category": "public.app-category.productivity",
-      "artifactName": "Agent-XHS-Workbench-${version}-${arch}.${ext}"
+      "artifactName": "Xiaoshimei-Studio-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Agent 小红书工作台"
+      "shortcutName": "小师妹 Studio"
     }
   }
 }

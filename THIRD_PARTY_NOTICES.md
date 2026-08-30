@@ -13,3 +13,10 @@
 各随仓库分发的 Skill 目录都保留了其原始 `LICENSE` 文件。Lingzao 仅保留当前工作流读取的 `SKILL.md` 与两份 playbook，不包含上游 CLI、Python 客户端或安装脚本。`skills-lock.json` 记录了 Skill 来源、路径、最小摘录范围和许可证。
 
 Codex CLI 是用户自行安装的外部前置条件，不随本仓库分发。请参考其上游许可和使用条款。
+
+## 小师妹 Studio v2 新增来源
+
+- `rebecha1227-a11y/Rednote-Image-Generater`，MIT License。仅参考其本地编辑、API 配置与失败恢复设计。
+- `openai/openai-quickstart-node` 与 OpenAI Node SDK，MIT License。用于直连文本与图片生成路径。
+
+RedInk、Beav 等带非商业限制的项目仅作为产品研究参考，本仓库没有复制其受限代码。

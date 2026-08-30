@@ -1,0 +1,23 @@
+{
+  "schema": "xiaoshimei.publish-package.v1",
+  "created_at": "2026-08-28T10:08:57.362Z",
+  "state": "local_beta",
+  "generation_mode": "PROVIDER",
+  "page_count": 5,
+  "dimensions": {
+    "width": 1080,
+    "height": 1440,
+    "ratio": "3:4"
+  },
+  "files": [
+    "01.png",
+    "02.png",
+    "03.png",
+    "04.png",
+    "05.png",
+    "publish-copy.txt",
+    "content.json",
+    "manifest.json"
+  ],
+  "publication_authority": "HUMAN_CONFIRMATION_REQUIRED"
+}

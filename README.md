@@ -4,9 +4,15 @@
 
 <h1 align="center">小红书图文内容工作台</h1>
 
-> 把账号定位、热点研究、选题、原创文稿、品牌配图、完整预览和人工确认组织成一条可控流程。
+</p>
+<h2 align="center">如果有帮到你，麻烦动动小手点亮STAR ✨✨</h2>
+</p>
 
-Agent 小红书工作台面向需要持续运营多个图文内容账号的创作者。每个内容账号拥有独立的定位、品牌角色、视觉语言、热点缓存、稿件和故事线；它们共用一个仅用于浏览器研究的执行会话。它不接入第三方模型 API，也不托管账号数据；Codex Agent 在你的本地环境中完成推理和浏览器操作。
+> **正式入口**：[xiaoshimei-full-workbench.vercel.app](https://xiaoshimei-full-workbench.vercel.app/)；正式源码以 [`LeonWu123456/agent-xiaohongshu-workbench`](https://github.com/LeonWu123456/agent-xiaohongshu-workbench) 的 `main` 为唯一可写权威，Vercel Preview 验收通过后才进入正式域名。完整合同见 [PRODUCT_CONTRACT.md](./PRODUCT_CONTRACT.md)。
+
+> 把账号定位、原创文稿、AI 配图、智能排版、自由编辑、回载和 3:4 发布包导出组织成一条可控流程。
+
+Agent 小红书工作台面向需要持续生产图文内容的创作者。网页正式版使用浏览器会话内的 BYOK 方式调用生成服务，不在 Vercel 保存密钥；本地版可从 macOS Keychain 读取密钥，并把生成图片、草稿和运行回执保存在源码目录之外的用户运行数据目录。
 
 <p align="center">
   <a href="https://github.com/EthanYoQ/agent-xiaohongshu-workbench/releases/latest"><strong>下载 Windows 安装包</strong></a>
@@ -112,7 +118,7 @@ Apple Silicon（M 系列）用户可从 [v0.2.1 GitHub Release](https://github.c
 在自己的 Mac 上可运行：
 
 ```bash
-npm ci
+npm ci --include=dev --workspaces=false
 npm run package:mac:arm64
 ```
 
@@ -134,16 +140,16 @@ codex --version
 ### 2. 安装项目依赖
 
 ```powershell
-git clone https://github.com/EthanYoQ/agent-xiaohongshu-workbench.git
+git clone https://github.com/LeonWu123456/agent-xiaohongshu-workbench.git
 cd agent-xiaohongshu-workbench
-npm install
+npm install --omit=dev --workspaces=false
 npm run setup
-npm run dev
+npm start
 ```
 
-打开终端提示的本地地址，默认是 `http://127.0.0.1:4173`。
+`npm start` 会同时启动 `http://127.0.0.1:4184` 的完整工作台和 `4175` 的本机生成服务；不能只启动网页，否则界面虽然能打开，“生成文字”仍会因为 Provider 离线而不可用。仅做无生成能力的静态/接口调试时，才使用 `npm run start:web`。
 
-`npm install` 会安装项目需要的 OpenCLI；项目所需的 Lingzao、中文去 AI 味和 OpenCLI 浏览器 Skill 已随仓库包含，无需再克隆其他 Skill 项目。
+根目录默认只安装工作台运行依赖，不自动安装体积较大的桌面打包工具。需要打桌面包时使用上面的 `--include=dev` 命令。项目所需的 Lingzao、中文去 AI 味和 OpenCLI 浏览器 Skill 已随仓库包含，无需再克隆其他 Skill 项目。
 
 `node_modules` 不会被提交到 Git。它属于标准公开依赖的本地安装结果，而不是项目交付物；Python 也不是本项目的运行前置条件。
 
@@ -158,18 +164,11 @@ npm run dev
 
 工作台不读取、复制或落盘 Cookie、密码和平台 API Key。登录态始终由你的 Chrome 会话管理。
 
-## 运行模型与推理强度
+## 生成服务
 
 <img src="./docs/assets/icons/bot.svg" width="20" alt="" />
 
-本项目从本机 `PATH` 调用 Codex CLI，默认模型为 `gpt-5.6-terra`。
-
-| 任务 | 推理强度 |
-| --- | --- |
-| 热点检索、头像/配图、纯视觉修改、发布 | `medium` |
-| Lingzao 拆解、初稿、去 AI 味、涉及文稿的修改 | `high` |
-
-生图使用 Codex Agent 运行环境提供的内置 `image_gen` 能力，不需要在本仓库配置模型 API Key；其可用性取决于你的 Codex 环境。
+当前完整工作台通过火山方舟生成文字和图片。网页正式版由使用者在当前浏览器会话提供自己的 API Key；Key 仅随请求发送，不写入仓库或云端持久存储。本地版默认从 macOS Keychain 读取 Key，并由 `npm start` 同时启动 4184 工作台和 4175 Provider。没有 Key 时生成端点会明确拒绝请求，排版、编辑、回载和本地导出仍可使用。
 
 ## 内置依赖与 Skill
 
@@ -207,12 +206,12 @@ npm run dev
 ├─ scripts/                        # 媒体探针、图片处理、运行时检查
 ├─ public/                         # 项目 logo；运行时生成目录被忽略
 ├─ desktop/                        # Windows 桌面启动器
-├─ packages/share-site/            # 可选的静态协作预览站点
+├─ deployment/                     # GitHub → Vercel 发布与回滚手册
+├─ logic/                          # 产品逻辑、体验标准与连续性记录
 ├─ docs/seo/                       # 仓库 SEO 元数据与基线记录
-└─ test/                           # 核心工作流单元测试
+├─ test/                           # 上游核心工作流单元测试
+└─ tests/                          # 完整工作台与布局回归测试
 ```
-
-`packages/share-site` 是不接登录态的可分享演示站点：它只在访问者浏览器本地保存演示编辑，不会代替本地工作台调用 Codex、抓取热点、生成图片或发布。
 
 ## 验证与开发
 
@@ -220,10 +219,11 @@ npm run dev
 npm run verify:runtime
 npm test
 npm run build
-npm run build:share
 npm run package:win
 npm run package:mac:arm64 # 仅 macOS；GitHub Actions 会在 macos-14 ARM64 runner 上执行
 ```
+
+正式源码以 GitHub `main` 为权威；功能分支先经过自动测试、Vercel Preview 与桌面/窄屏浏览器验收，再提升同一制品到正式域名。完整流程见 [deployment/PRODUCTION_RUNBOOK.md](./deployment/PRODUCTION_RUNBOOK.md)。
 
 ## 开源许可
 
