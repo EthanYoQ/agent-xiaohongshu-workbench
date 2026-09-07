@@ -1,0 +1,88 @@
+name: One-off Actions audit and Xiaohongshu artifact cleanup
+on:
+  push:
+    branches: [maintenance/actions-cleanup-20260907]
+    paths: [.github/workflows/one-off-actions-audit.yml]
+permissions: {}
+jobs:
+  audit-and-clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Inventory and delete only this repository's existing Actions artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request,urllib.error,collections
+          repo='EthanYoQ/agent-xiaohongshu-workbench'
+          assert os.environ['GITHUB_REPOSITORY']==repo
+          current=int(os.environ['GITHUB_RUN_ID'])
+          def api(path,method='GET',missing=False,auth=True):
+              assert path.startswith('/repos/EthanYoQ/')
+              assert method=='GET' or (method=='DELETE' and path.startswith('/repos/'+repo+'/actions/artifacts/') and path.rsplit('/',1)[1].isdigit())
+              headers={'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}
+              if auth: headers['Authorization']='Bearer '+os.environ['GH_TOKEN']
+              try:
+                  with urllib.request.urlopen(urllib.request.Request('https://api.github.com'+path,headers=headers,method=method),timeout=30) as r:
+                      data=r.read()
+                      return json.loads(data) if data else None
+              except urllib.error.HTTPError as e:
+                  if missing and e.code==404: return None
+                  raise
+          def pages(path,key=None,auth=True):
+              result=[]
+              for page in range(1,31):
+                  value=api(path+('&' if '?' in path else '?')+f'per_page=100&page={page}',auth=auth)
+                  rows=value[key] if key else value
+                  assert isinstance(rows,list)
+                  result.extend(rows)
+                  if len(rows)<100: return result
+              raise RuntimeError('pagination limit; refusing incomplete inventory')
+          def releases():
+              return [{'id':r['id'],'tag':r['tag_name'],'draft':r['draft'],'body':r['body'],
+                  'assets':[{k:a.get(k) for k in ['id','name','size','digest']} for a in r['assets']]} for r in pages('/repos/'+repo+'/releases')]
+          prefix='/repos/'+repo
+          artifacts=pages(prefix+'/actions/artifacts','artifacts')
+          for status in ['in_progress','queued','waiting','pending','requested']:
+              active=pages(prefix+'/actions/runs?status='+status,'workflow_runs')
+              assert not [r for r in active if r['id']!=current and r['status']!='completed'],'another run is active; retain all artifacts'
+          before=releases()
+          for a in artifacts:
+              run=api(prefix+'/actions/runs/'+str(a['workflow_run']['id']))
+              assert run['status']=='completed','artifact is still in use by an active source run'
+          evidence={'repository':repo,'phase':'before-deletion','artifacts':artifacts,'releases':before}
+          print('CLEANUP_EVIDENCE '+json.dumps(evidence,ensure_ascii=False),flush=True)
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('## Owner-approved Actions artifact cleanup\n\n```json\n'+json.dumps(evidence,ensure_ascii=False,indent=2)+'\n```\n')
+          deleted=[]
+          for saved in artifacts:
+              path=prefix+'/actions/artifacts/'+str(saved['id'])
+              live=api(path,missing=True)
+              if live is None: continue
+              for key in ['id','name','digest','size_in_bytes','workflow_run']:
+                  assert live.get(key)==saved.get(key),'artifact identity changed'
+              api(path,'DELETE')
+              assert api(path,missing=True) is None,'deletion not confirmed'
+              deleted.append(saved)
+          assert releases()==before,'release metadata changed during maintenance'
+          remaining=pages(prefix+'/actions/artifacts','artifacts')
+          result={'deletedCount':len(deleted),'deletedBytes':sum(a['size_in_bytes'] for a in deleted),'remainingCount':len(remaining),'releasesUnchanged':True,'logsAndRunsRetained':True}
+          print('CLEANUP_RESULT '+json.dumps(result),flush=True)
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f: f.write('\n## Result\n```json\n'+json.dumps(result,indent=2)+'\n```\n')
+          public=['Invoice-Downloader','ai-seed-project','Skill-hub','MicrosoftVibeVoice','whisper-input','MoveHealthP0','Birthday-Puzzle-Vault','AgentHive','AI-Novel-Writer','wechat-article-pipeline','agent-xiaohongshu-workbench','maigret','chinese-independent-developer','EthanYoQ.github.io','ollama','awesome-windows','awesome-mac','awesome-deepseek-integration','awesome-opensource-ai','best-windows-apps']
+          for name in public:
+              try:
+                  runs=pages('/repos/EthanYoQ/'+name+'/actions/runs?created=%3E%3D2026-08-01','workflow_runs')
+                  buckets={}
+                  for r in runs:
+                      key=(r['created_at'][:7],r['name'],r['event'])
+                      b=buckets.setdefault(key,{'month':key[0],'workflow':key[1],'event':key[2],'count':0,'conclusions':{},'latestRun':r['id'],'latestDate':r['created_at'],'latestSHA':r['head_sha']})
+                      b['count']+=1;c=r['conclusion'] or r['status'];b['conclusions'][c]=b['conclusions'].get(c,0)+1
+                      if c=='failure' and 'latestFailedRun' not in b:b['latestFailedRun']=r['id']
+                  print('PUBLIC_AUDIT '+json.dumps({'repository':name,'runsSinceAugust1':len(runs),'buckets':list(buckets.values())},ensure_ascii=False),flush=True)
+              except Exception as e: print('PUBLIC_AUDIT_ERROR '+json.dumps({'repository':name,'error':str(e)}),flush=True)
+          PY
